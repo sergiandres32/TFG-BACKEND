@@ -1,0 +1,673 @@
+{
+  "info": {
+    "_postman_id": "46f63f5a-7691-4d72-9d2a-b3a9bba26400",
+    "name": "Jutge API Contract - Error Cases",
+    "description": "Negative/edge API contract checks for Jutge.\n\nGoal:\n- Validate key error contracts (400/403/404)\n- Keep PR checks fast and deterministic\n\nRun with Newman:\n  newman run dev-tools/postman/jutge_api_contract_errors.postman_collection.json -e dev-tools/postman/jutge_e2e.local.postman_environment.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "professorUsername",
+      "value": "profesor_seed"
+    },
+    {
+      "key": "professorPassword",
+      "value": "profesor123"
+    },
+    {
+      "key": "professorToken",
+      "value": ""
+    },
+    {
+      "key": "errSuffix",
+      "value": ""
+    },
+    {
+      "key": "errStudentUsername",
+      "value": ""
+    },
+    {
+      "key": "errStudentEmail",
+      "value": ""
+    },
+    {
+      "key": "errStudentPassword",
+      "value": "student_pass_123"
+    },
+    {
+      "key": "errStudentToken",
+      "value": ""
+    },
+    {
+      "key": "errTopicName",
+      "value": ""
+    },
+    {
+      "key": "errTopicId",
+      "value": ""
+    },
+    {
+      "key": "errQuizId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Bootstrap",
+      "item": [
+        {
+          "name": "0.1 - Professor Login",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{professorUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{professorPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const professorLoginData = pm.response.json();",
+                  "pm.environment.set('professorToken', professorLoginData.access_token);",
+                  "const suffix = Date.now().toString();",
+                  "pm.environment.set('errSuffix', suffix);",
+                  "pm.environment.set('errStudentUsername', `pm_err_${suffix}`);",
+                  "pm.environment.set('errStudentEmail', `pm_err_${suffix}@example.com`);",
+                  "pm.environment.set('errTopicName', `pm_err_topic_${suffix}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.2 - Register Error Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{errStudentUsername}}\",\n  \"email\": \"{{errStudentEmail}}\",\n  \"password\": \"{{errStudentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.3 - Login Error Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{errStudentUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{errStudentPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('errStudentToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Error Contract - 400/404",
+      "item": [
+        {
+          "name": "E1 - Wrong password returns 400",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{professorUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "wrong_password",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E2 - Duplicate register returns 400",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{errStudentUsername}}\",\n  \"email\": \"{{errStudentEmail}}\",\n  \"password\": \"{{errStudentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E3 - Create topic (seed for error cases)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{errTopicName}}\",\n  \"description\": \"Error cases topic\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('errTopicId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E4 - Duplicate topic name returns 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{errTopicName}}\",\n  \"description\": \"Duplicate topic\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E5 - Create exercise with invalid topic returns 404",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": 999999,\n  \"title\": \"invalid_topic_ex\",\n  \"description\": \"Should fail\",\n  \"level\": \"beginner\",\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E6 - Update missing topic returns 404",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "999999"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"missing_topic\",\n  \"description\": \"Should fail\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E7 - Create quiz question (seed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{errTopicId}}\",\n  \"level\": \"beginner\",\n  \"statement\": \"Error seed question\",\n  \"options\": [\"A\", \"B\", \"C\", \"D\"],\n  \"correct_option_index\": 0,\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('errQuizId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E8 - Update quiz invalid index returns 400",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{errQuizId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{errQuizId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{errTopicId}}\",\n  \"level\": \"beginner\",\n  \"statement\": \"Invalid index\",\n  \"options\": [\"A\", \"B\"],\n  \"correct_option_index\": 99,\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E9 - Student answers quiz out-of-range returns 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{errStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{errQuizId}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{errQuizId}}",
+                "answer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selected_option_index\": 42\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E10 - Delete missing quiz returns 404",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "E11 - Get missing job returns 404",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{errStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Error Contract - RBAC",
+      "item": [
+        {
+          "name": "R1 - Student cannot list students (403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{errStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/students",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "students"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

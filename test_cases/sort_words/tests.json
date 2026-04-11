@@ -1,0 +1,26 @@
+{
+  "name": "Ordenar palabras alfabéticamente",
+  "tests": [
+    {
+      "id": "simple",
+      "input": "3\nmanzana\nbanana\narandano\n",
+      "mode": "exact",
+      "expected": "arandano\nbanana\nmanzana\n",
+      "ignore_whitespace": false
+    },
+    {
+      "id": "inverso",
+      "input": "2\nzebra\napple\n",
+      "mode": "exact",
+      "expected": "apple\nzebra\n",
+      "ignore_whitespace": false
+    },
+    {
+      "id": "una_palabra",
+      "input": "1\nhola\n",
+      "mode": "exact",
+      "expected": "hola\n",
+      "ignore_whitespace": false
+    }
+  ]
+}

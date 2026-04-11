@@ -1,0 +1,246 @@
+###############################################
+# Jutge API - Flujo Completo: Profesora y Alumno
+# Usar con REST Client (VS Code Extension)
+###############################################
+
+# Variables globales
+@baseUrl = http://localhost:8000
+
+# Usuarios fijos (para poder volver a ejecutar los requests)
+@profesoraUsername = profesora_maria
+@profesoraEmail = maria@profesor.com
+@profesoraPassword = profpass123
+
+@alumnoUsername = alumno_juan
+@alumnoEmail = juan@alumno.com
+@alumnoPassword = alumnopass123
+
+# ✅ Los tokens, exerciseId y jobId se capturan automáticamente
+# No necesitas definir variables manualmente
+# 
+# CÓMO FUNCIONA:
+# - Request 1.2 (login) se nombra con # @name loginProfesor
+# - Request 1.3 usa: Authorization: Bearer {{loginProfesor.response.body.access_token}}
+# - Request 1.3 se nombra con # @name createExercise
+# - Request 1.4 usa: "exercise_id": {{createExercise.response.body.id}}
+# - ¡Todo automático! Solo ejecuta en orden
+
+
+###############################################
+# PARTE 1: PROFESORA - Setup del ejercicio
+###############################################
+
+### 1.1. Registrar PROFESORA
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+  "username": "{{profesoraUsername}}",
+  "email": "{{profesoraEmail}}",
+  "password": "{{profesoraPassword}}"
+}
+
+### 1.2. Login PROFESORA
+# @name loginProfesor
+POST {{baseUrl}}/token
+Content-Type: application/x-www-form-urlencoded
+
+username={{profesoraUsername}}&password={{profesoraPassword}}
+
+# ✅ El token se guarda automáticamente
+
+### 1.3. PROFESORA crea ejercicio "Sum Two Numbers"
+# @name createExercise
+POST {{baseUrl}}/exercises
+Content-Type: application/json
+Authorization: Bearer {{loginProfesor.response.body.access_token}}
+
+{
+  "title": "Sum Two Numbers",
+  "description": "Write a C program that reads two integers from stdin and prints their sum followed by a newline.",
+  "level": "beginner"
+}
+
+# ✅ El exerciseId se guarda automáticamente
+
+### 1.4. PROFESORA crea test case público (ejemplo)
+POST {{baseUrl}}/test_cases
+Content-Type: application/json
+Authorization: Bearer {{loginProfesor.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "name": "Test 1: Simple addition",
+  "content": {
+    "input": "5 3",
+    "expected": "8\n",
+    "mode": "exact"
+  },
+  "hidden": false
+}
+
+### 1.5. PROFESORA crea test case oculto (secreto)
+POST {{baseUrl}}/test_cases
+Content-Type: application/json
+Authorization: Bearer {{loginProfesor.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "name": "Test 2: Larger numbers",
+  "content": {
+    "input": "1000 2000",
+    "expected": "3000\n",
+    "mode": "exact"
+  },
+  "hidden": true
+}
+
+
+###############################################
+# PARTE 2: ALUMNO - Intento y restricciones
+###############################################
+
+### 2.1. Registrar ALUMNO
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+  "username": "{{alumnoUsername}}",
+  "email": "{{alumnoEmail}}",
+  "password": "{{alumnoPassword}}"
+}
+
+### 2.2. Login ALUMNO
+# @name loginAlumno
+POST {{baseUrl}}/token
+Content-Type: application/x-www-form-urlencoded
+
+username={{alumnoUsername}}&password={{alumnoPassword}}
+
+# ✅ El token se guarda automáticamente
+
+### 2.3. ALUMNO intenta crear ejercicio (debe fallar con 401 - sin permisos)
+POST {{baseUrl}}/exercises
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "title": "Ejercicio ilegal del alumno",
+  "description": "Los alumnos no deberían poder crear ejercicios",
+  "level": "beginner"
+}
+
+# ❌ Debería retornar 401 Unauthorized o 403 Forbidden
+
+
+###############################################
+# PARTE 3: ALUMNO - Envío de código
+###############################################
+
+### 3.1. ALUMNO envía código CORRECTO
+# @name submitCorrect
+POST {{baseUrl}}/submissions
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "code": "#include <stdio.h>\nint main() {\n    int a, b;\n    scanf(\"%d %d\", &a, &b);\n    printf(\"%d\\n\", a + b);\n    return 0;\n}"
+}
+
+# ✅ El jobId se guarda automáticamente
+
+### 3.2. ALUMNO consulta resultado del Job (repetir hasta status=completed)
+GET {{baseUrl}}/jobs/{{submitCorrect.response.body.job_id}}
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+# Respuesta (en evaluación):
+# {
+#   "status": "pending" o "evaluating",
+#   "verdict": null
+# }
+#
+# Respuesta (completado):
+# {
+#   "status": "completed",
+#   "verdict": "AC",
+#   "passed_all": true,
+#   "duration_ms": 45
+# }
+
+### 3.3. ALUMNO envía código INCORRECTO (para probar WA)
+POST {{baseUrl}}/submissions
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "code": "#include <stdio.h>\nint main() {\n    int a, b;\n    scanf(\"%d %d\", &a, &b);\n    printf(\"%d\\n\", a * b);\n    return 0;\n}"
+}
+
+### 3.4. ALUMNO envía código con ERROR DE COMPILACIÓN (CE)
+POST {{baseUrl}}/submissions
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "code": "#include <stdio.h>\nint main() {\n    int a b;\n    printf(\"syntax error\");\n    return 0\n}"
+}
+
+
+###############################################
+# PARTE 4: Ver resultados y leaderboard
+###############################################
+
+### 4.1. Ver LEADERBOARD (cualquier usuario)
+GET {{baseUrl}}/leaderboard
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+# Respuesta esperada:
+# [
+#   {
+#     "username": "alumno_juan",
+#     "completed_exercises": 1
+#   }
+# ]
+
+
+###############################################
+# EJEMPLOS ADICIONALES DE ERRORES
+###############################################
+
+### TLE (Time Limit Exceeded) - Bucle infinito
+POST {{baseUrl}}/submissions
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "code": "#include <stdio.h>\nint main() {\n    while(1) {}\n    return 0;\n}"
+}
+
+### RTE (Runtime Error) - Segmentation fault
+POST {{baseUrl}}/submissions
+Content-Type: application/json
+Authorization: Bearer {{loginAlumno.response.body.access_token}}
+
+{
+  "exercise_id": {{createExercise.response.body.id}},
+  "code": "#include <stdio.h>\nint main() {\n    int *p = NULL;\n    *p = 42;\n    return 0;\n}"
+}
+
+
+###############################################
+# FLUJO RESUMIDO
+###############################################
+
+# ✅ AUTOMATIZADO: Los tokens, exerciseId y jobId se capturan automáticamente
+# 1. Ejecuta requests en orden (1.1 → 1.2 → ... → 4.1)
+# 2. NO necesitas copiar nada manualmente
+# 3. Los valores se guardan automáticamente usando @name
+# 4. Observa que alumno NO puede crear ejercicios (request 2.3)
+# 5. Observa diferentes verdicts: AC, WA, CE, TLE, RTE
+
+# TIP: Usa Ctrl+Alt+R para enviar request
+# NOTA: Cada request debe ejecutarse DESPUÉS de que el anterior haya completado

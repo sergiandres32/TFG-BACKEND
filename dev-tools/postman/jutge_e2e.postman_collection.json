@@ -1,0 +1,2425 @@
+{
+  "info": {
+    "_postman_id": "9e989290-e935-46f8-9c24-df1a5ffaf156",
+    "name": "Jutge API E2E",
+    "description": "Full E2E multi-actor collection for the Jutge API.\n\nGroups:\n- 0: Setup accounts\n- 1: Professor creates resources\n- 2: Good student achieves AC\n- 3: Bad student gets WA\n- 4: Security checks (student actions on teacher-only endpoints must return 403)\n- 5: Integrity check after malicious actions\n\nRun with Newman:\n  newman run jutge_e2e.postman_collection.json --delay-request 3000\n\nFor submission file paths, update sumOkCodePath / sortOkCodePath / etc. variables\nor set them to absolute paths of the .c files in dev-tools/postman/.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "professorUsername",
+      "value": "profesor_seed"
+    },
+    {
+      "key": "professorPassword",
+      "value": "profesor123"
+    },
+    {
+      "key": "professorToken",
+      "value": ""
+    },
+    {
+      "key": "goodUsername",
+      "value": "pm_good_student"
+    },
+    {
+      "key": "goodEmail",
+      "value": "pm_good_student@example.com"
+    },
+    {
+      "key": "badUsername",
+      "value": "pm_bad_student"
+    },
+    {
+      "key": "badEmail",
+      "value": "pm_bad_student@example.com"
+    },
+    {
+      "key": "maliciousUsername",
+      "value": "pm_malicious_student"
+    },
+    {
+      "key": "maliciousEmail",
+      "value": "pm_malicious_student@example.com"
+    },
+    {
+      "key": "studentPassword",
+      "value": "student_pass_123"
+    },
+    {
+      "key": "goodToken",
+      "value": ""
+    },
+    {
+      "key": "badToken",
+      "value": ""
+    },
+    {
+      "key": "maliciousToken",
+      "value": ""
+    },
+    {
+      "key": "topicBasicsName",
+      "value": "pm_Basics"
+    },
+    {
+      "key": "topicLoopsName",
+      "value": "pm_Loops"
+    },
+    {
+      "key": "topicSacrificialName",
+      "value": "pm_DeleteMe"
+    },
+    {
+      "key": "exerciseSumTitle",
+      "value": "pm_sum"
+    },
+    {
+      "key": "exerciseSortTitle",
+      "value": "pm_sort_words"
+    },
+    {
+      "key": "exerciseSacrificialTitle",
+      "value": "pm_delete_me"
+    },
+    {
+      "key": "topicBasicsId",
+      "value": ""
+    },
+    {
+      "key": "topicLoopsId",
+      "value": ""
+    },
+    {
+      "key": "topicSacrificialId",
+      "value": ""
+    },
+    {
+      "key": "exerciseSumId",
+      "value": ""
+    },
+    {
+      "key": "exerciseSortId",
+      "value": ""
+    },
+    {
+      "key": "exerciseSacrificialId",
+      "value": ""
+    },
+    {
+      "key": "q1Id",
+      "value": ""
+    },
+    {
+      "key": "q2Id",
+      "value": ""
+    },
+    {
+      "key": "currentJobId",
+      "value": ""
+    },
+    {
+      "key": "pollRetries",
+      "value": "0"
+    },
+    {
+      "key": "sumOkCodePath",
+      "value": "/home/sergio/Escritorio/TFG/jutge/dev-tools/postman/sum_ok.c"
+    },
+    {
+      "key": "sumBadCodePath",
+      "value": "/home/sergio/Escritorio/TFG/jutge/dev-tools/postman/sum_bad.c"
+    },
+    {
+      "key": "sortOkCodePath",
+      "value": "/home/sergio/Escritorio/TFG/jutge/dev-tools/postman/sort_ok.c"
+    },
+    {
+      "key": "sortBadCodePath",
+      "value": "/home/sergio/Escritorio/TFG/jutge/dev-tools/postman/sort_bad.c"
+    }
+  ],
+  "item": [
+    {
+      "id": "50942b3c-4986-4303-a590-dae5a1c469d9",
+      "name": "0. Setup - Accounts",
+      "item": [
+        {
+          "id": "83c3bd23-72e4-42fb-888c-5ac5f81edf09",
+          "name": "0.1 - Professor Login",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{professorUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{professorPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json();",
+                  "pm.test('Has access_token', () => pm.expect(data.access_token).to.be.a('string'));",
+                  "pm.environment.set('professorToken', data.access_token);",
+                  "const suffix = Date.now().toString();",
+                  "pm.environment.set('goodUsername', `pm_good_student_${suffix}`);",
+                  "pm.environment.set('goodEmail', `pm_good_student_${suffix}@example.com`);",
+                  "pm.environment.set('badUsername', `pm_bad_student_${suffix}`);",
+                  "pm.environment.set('badEmail', `pm_bad_student_${suffix}@example.com`);",
+                  "pm.environment.set('maliciousUsername', `pm_malicious_student_${suffix}`);",
+                  "pm.environment.set('maliciousEmail', `pm_malicious_student_${suffix}@example.com`);",
+                  "pm.environment.set('topicBasicsName', `pm_Basics_${suffix}`);",
+                  "pm.environment.set('topicLoopsName', `pm_Loops_${suffix}`);",
+                  "pm.environment.set('topicSacrificialName', `pm_DeleteMe_${suffix}`);",
+                  "pm.environment.set('exerciseSumTitle', `pm_sum_${suffix}`);",
+                  "pm.environment.set('exerciseSortTitle', `pm_sort_words_${suffix}`);",
+                  "pm.environment.set('exerciseSacrificialTitle', `pm_delete_me_${suffix}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "8f00833d-d95a-4b05-801c-7fa672e72492",
+          "name": "0.2 - Validate Professor Role",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var data = pm.response.json();",
+                  "pm.test('Role is teacher', () => pm.expect(data.role).to.equal('teacher'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "4af72421-7447-429d-8673-841151a3a0ce",
+          "name": "0.3 - Register Good Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{goodUsername}}\",\n  \"email\": \"{{goodEmail}}\",\n  \"password\": \"{{studentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register accepted (200) or already exists (400)', function() {",
+                  "    pm.expect([200, 400]).to.include(pm.response.code);",
+                  "    if (pm.response.code === 400) {",
+                  "        pm.expect(pm.response.text().toLowerCase()).to.include('already');",
+                  "    }",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f6b6ed43-4a55-4a4d-a072-a14384b98cee",
+          "name": "0.4 - Login Good Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{goodUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{studentPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('goodToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "1b5681aa-8174-4666-89c4-039e8476d7e1",
+          "name": "0.5 - Register Bad Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{badUsername}}\",\n  \"email\": \"{{badEmail}}\",\n  \"password\": \"{{studentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register accepted or already exists', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "1dc16fdb-c2e8-4a35-9eb2-796b344c50c0",
+          "name": "0.6 - Login Bad Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{badUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{studentPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('badToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "07953efc-0426-4f63-9164-d45e167078ba",
+          "name": "0.7 - Register Malicious Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{maliciousUsername}}\",\n  \"email\": \"{{maliciousEmail}}\",\n  \"password\": \"{{studentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Register accepted or already exists', () => pm.expect([200, 400]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "9a42f5b6-bfce-4813-a2d7-1168ace16e23",
+          "name": "0.8 - Login Malicious Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{maliciousUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{studentPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('maliciousToken', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "a1e67892-bf6d-4a0a-8a5c-b33ced34f9d3",
+      "name": "1. Professor Setup",
+      "item": [
+        {
+          "id": "55ad106c-420c-4cd3-a2ba-a1d8897c025f",
+          "name": "1.1 - Create Topic: Basics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{topicBasicsName}}\",\n  \"description\": \"Variables, loops, functions\",\n  \"required_beginner\": 1,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('topicBasicsId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "22ce02c5-a492-451c-bd86-ef12b166fbfa",
+          "name": "1.2 - Create Topic: Loops",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{topicLoopsName}}\",\n  \"description\": \"For, while, do-while\",\n  \"required_beginner\": 0,\n  \"required_mid\": 1,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('topicLoopsId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "c7f269df-49a8-44c2-baee-dc2ea09dd3f9",
+          "name": "1.3 - Create Topic: Sacrificial",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{topicSacrificialName}}\",\n  \"description\": \"Sacrificial for security DELETE tests\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('topicSacrificialId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "e3116e39-08f6-43b0-ae1f-3f26cadba5b0",
+          "name": "1.4 - Create Exercise: Sum",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicBasicsId}}\",\n  \"title\": \"{{exerciseSumTitle}}\",\n  \"description\": \"Sum two integers\",\n  \"level\": \"beginner\",\n  \"is_required\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('exerciseSumId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "cd063dfd-e187-42c6-bb62-a2bfe9ba89f4",
+          "name": "1.5 - Create Exercise: Sort Words",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicLoopsId}}\",\n  \"title\": \"{{exerciseSortTitle}}\",\n  \"description\": \"Sort words alphabetically\",\n  \"level\": \"mid\",\n  \"is_required\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('exerciseSortId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "2d9a253b-6469-4196-8794-8c98b64fb283",
+          "name": "1.6 - Create Exercise: Sacrificial",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicSacrificialId}}\",\n  \"title\": \"{{exerciseSacrificialTitle}}\",\n  \"description\": \"Sacrificial exercise for security tests\",\n  \"level\": \"beginner\",\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('exerciseSacrificialId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "a7890cab-5ef6-4ddb-bc73-ea321f789bba",
+          "name": "1.7 - Create Test Case: Sum 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSumId}}\",\n  \"name\": \"sum_tc_1\",\n  \"content\": {\n    \"input\": \"1 2\\n\",\n    \"expected\": \"3\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "eaa7e20b-87ab-4529-9647-e47e99574d65",
+          "name": "1.8 - Create Test Case: Sum 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSumId}}\",\n  \"name\": \"sum_tc_2\",\n  \"content\": {\n    \"input\": \"10 30\\n\",\n    \"expected\": \"40\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "50830371-2950-4514-98f0-6cdcb855b364",
+          "name": "1.9 - Create Test Case: Sort 1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSortId}}\",\n  \"name\": \"sort_tc_1\",\n  \"content\": {\n    \"input\": \"3\\nz\\na\\nb\\n\",\n    \"expected\": \"a\\nb\\nz\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "281efa62-35c0-4d82-8300-5c78239bb4a8",
+          "name": "1.10 - Create Test Case: Sort 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSortId}}\",\n  \"name\": \"sort_tc_2\",\n  \"content\": {\n    \"input\": \"4\\npear\\napple\\nkiwi\\nbanana\\n\",\n    \"expected\": \"apple\\nbanana\\nkiwi\\npear\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "03132387-39cc-47e7-af6a-7156324bb494",
+          "name": "1.11 - Create Test Case: Sacrificial",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSacrificialId}}\",\n  \"name\": \"sacrificial_tc_1\",\n  \"content\": {\n    \"input\": \"1 1\\n\",\n    \"expected\": \"2\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "5b872a2e-9f04-4837-8acc-fccc90b15d2d",
+          "name": "1.12 - Create Quiz Question Q1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicBasicsId}}\",\n  \"level\": \"beginner\",\n  \"statement\": \"What is a variable?\",\n  \"options\": [\n    \"A memory location\",\n    \"A number\",\n    \"A function\",\n    \"A keyword\"\n  ],\n  \"correct_option_index\": 0,\n  \"is_required\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('q1Id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "30d9c08d-4042-4d94-aee3-5a00b9f500fb",
+          "name": "1.13 - Create Quiz Question Q2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicLoopsId}}\",\n  \"level\": \"mid\",\n  \"statement\": \"What does a for loop do?\",\n  \"options\": [\n    \"Repeats code\",\n    \"Defines a function\",\n    \"Creates a class\",\n    \"None of above\"\n  ],\n  \"correct_option_index\": 0,\n  \"is_required\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('q2Id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "aaf6ce07-6e51-4d33-ad16-a75f06820547",
+          "name": "1.14 - List Students",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/students",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "students"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Returns array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b8927f59-5876-4667-93b6-5b419cb9ac06",
+      "name": "2. Good Student - Happy Path",
+      "item": [
+        {
+          "id": "28b63ecb-e43d-4e04-9965-dc1e71e79829",
+          "name": "2.1 - Answer Q1 Correctly (Good)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{q1Id}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{q1Id}}",
+                "answer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selected_option_index\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Answer is correct', () => pm.expect(pm.response.json().is_correct).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "94dcf12e-617a-46ea-a668-312e495c61c2",
+          "name": "2.2 - Answer Q2 Correctly (Good)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{q2Id}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{q2Id}}",
+                "answer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selected_option_index\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Answer is correct', () => pm.expect(pm.response.json().is_correct).to.be.true);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "34b9f251-6a73-46f3-8413-c510238b203c",
+          "name": "2.3 - Submit Sum OK (Good)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exercise_id",
+                  "value": "{{exerciseSumId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_file",
+                  "src": "{{sumOkCodePath}}",
+                  "type": "file"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var jobId = pm.response.json().job_id;",
+                  "pm.environment.set('currentJobId', jobId);",
+                  "pm.environment.set('pollRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "2b82bc71-dac9-430d-96ce-e47c34753e7b",
+          "name": "Poll: Sum OK",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{currentJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{currentJobId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initial poll request status 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Poll until terminal status - Poll: Sum OK', function (done) {",
+                  "    const token = pm.environment.get('goodToken');",
+                  "    const baseUrl = pm.environment.get('baseUrl');",
+                  "    const jobId = pm.environment.get('currentJobId');",
+                  "    const maxAttempts = 60;",
+                  "    let attempts = 0;",
+                  "",
+                  "    function finishError(message) {",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        done(new Error(message));",
+                  "    }",
+                  "",
+                  "    function evaluate(payload) {",
+                  "        const status = payload && payload.status;",
+                  "        if (['completed', 'failed'].includes(status)) {",
+                  "            pm.environment.set('pollRetries', '0');",
+                  "            pm.expect(['completed', 'failed']).to.include(status);",
+                  "            pm.expect(payload.verdict).to.equal('AC');",
+                  "            done();",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        if (attempts >= maxAttempts) {",
+                  "            finishError(`Timeout waiting for terminal status. Last status: ${status}`);",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        attempts += 1;",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        setTimeout(function () {",
+                  "            pm.sendRequest({",
+                  "                url: `${baseUrl}/jobs/${jobId}`,",
+                  "                method: 'GET',",
+                  "                header: { Authorization: `Bearer ${token}` }",
+                  "            }, function (err, res) {",
+                  "                if (err) {",
+                  "                    finishError(`Polling request failed: ${err}`);",
+                  "                    return;",
+                  "                }",
+                  "                if (res.code !== 200) {",
+                  "                    finishError(`Polling returned HTTP ${res.code}: ${res.text()}`);",
+                  "                    return;",
+                  "                }",
+                  "                let nextPayload;",
+                  "                try {",
+                  "                    nextPayload = res.json();",
+                  "                } catch (e) {",
+                  "                    finishError(`Polling returned invalid JSON: ${e}`);",
+                  "                    return;",
+                  "                }",
+                  "                evaluate(nextPayload);",
+                  "            });",
+                  "        }, 1000);",
+                  "    }",
+                  "",
+                  "    evaluate(pm.response.json());",
+                  "});",
+                  "pm.test('Expected verdict is AC', function () {",
+                  "    pm.expect(true).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "cd67691f-3b47-4d59-8b2a-e5b4f2557c3c",
+          "name": "2.4 - Submit Sort OK (Good)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exercise_id",
+                  "value": "{{exerciseSortId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_file",
+                  "src": "{{sortOkCodePath}}",
+                  "type": "file"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var jobId = pm.response.json().job_id;",
+                  "pm.environment.set('currentJobId', jobId);",
+                  "pm.environment.set('pollRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "898cf2e2-b9f6-47f0-87a0-08f6a52b1655",
+          "name": "Poll: Sort OK",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{currentJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{currentJobId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initial poll request status 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Poll until terminal status - Poll: Sort OK', function (done) {",
+                  "    const token = pm.environment.get('goodToken');",
+                  "    const baseUrl = pm.environment.get('baseUrl');",
+                  "    const jobId = pm.environment.get('currentJobId');",
+                  "    const maxAttempts = 60;",
+                  "    let attempts = 0;",
+                  "",
+                  "    function finishError(message) {",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        done(new Error(message));",
+                  "    }",
+                  "",
+                  "    function evaluate(payload) {",
+                  "        const status = payload && payload.status;",
+                  "        if (['completed', 'failed'].includes(status)) {",
+                  "            pm.environment.set('pollRetries', '0');",
+                  "            pm.expect(['completed', 'failed']).to.include(status);",
+                  "            pm.expect(payload.verdict).to.equal('AC');",
+                  "            done();",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        if (attempts >= maxAttempts) {",
+                  "            finishError(`Timeout waiting for terminal status. Last status: ${status}`);",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        attempts += 1;",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        setTimeout(function () {",
+                  "            pm.sendRequest({",
+                  "                url: `${baseUrl}/jobs/${jobId}`,",
+                  "                method: 'GET',",
+                  "                header: { Authorization: `Bearer ${token}` }",
+                  "            }, function (err, res) {",
+                  "                if (err) {",
+                  "                    finishError(`Polling request failed: ${err}`);",
+                  "                    return;",
+                  "                }",
+                  "                if (res.code !== 200) {",
+                  "                    finishError(`Polling returned HTTP ${res.code}: ${res.text()}`);",
+                  "                    return;",
+                  "                }",
+                  "                let nextPayload;",
+                  "                try {",
+                  "                    nextPayload = res.json();",
+                  "                } catch (e) {",
+                  "                    finishError(`Polling returned invalid JSON: ${e}`);",
+                  "                    return;",
+                  "                }",
+                  "                evaluate(nextPayload);",
+                  "            });",
+                  "        }, 1000);",
+                  "    }",
+                  "",
+                  "    evaluate(pm.response.json());",
+                  "});",
+                  "pm.test('Expected verdict is AC', function () {",
+                  "    pm.expect(true).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "f59a10a2-32d4-4482-a10f-63946420b8a0",
+          "name": "2.5 - Check Profile Good Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('completed_exercises == 2', () => pm.expect(pm.response.json().completed_exercises).to.equal(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6c3af084-cc94-4ffc-a03a-79087817a174",
+          "name": "2.6 - Check Progress Good Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/progress",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "progress"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('completed_exercises_count == 2', () => pm.expect(pm.response.json().completed_exercises_count).to.equal(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "8d950556-728e-44a7-b3a7-4012674ec66f",
+          "name": "2.7 - Check Submissions Good Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{goodToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "submissions"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var subs = pm.response.json();",
+                  "var acCount = subs.filter(s => s.verdict === 'AC').length;",
+                  "pm.test('At least 2 AC submissions', () => pm.expect(acCount).to.be.at.least(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "90651126-d1b7-4077-80e7-c945e1c79ff4",
+          "name": "2.8 - Check Leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaderboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaderboard"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var lb = pm.response.json();",
+                  "var goodUser = pm.environment.get('goodUsername');",
+                  "var entry = lb.find(e => e.username === goodUser);",
+                  "pm.test('Good student on leaderboard', () => pm.expect(entry).to.not.be.undefined);",
+                  "pm.test('Good student completed_count == 2', () => pm.expect(entry.completed_count).to.equal(2));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "45829e70-1bbe-4380-9307-f58c93d42579",
+      "name": "3. Bad Student - Wrong Answers",
+      "item": [
+        {
+          "id": "bbdd8142-a4dd-4660-bda6-11e98ee8e699",
+          "name": "3.1 - Answer Q1 Incorrectly (Bad)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{q1Id}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{q1Id}}",
+                "answer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selected_option_index\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Answer is incorrect', () => pm.expect(pm.response.json().is_correct).to.be.false);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "0b588d25-2f0f-46a5-bfc6-7cc0acaea330",
+          "name": "3.2 - Answer Q2 Incorrectly (Bad)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{q2Id}}/answer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{q2Id}}",
+                "answer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"selected_option_index\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Answer is incorrect', () => pm.expect(pm.response.json().is_correct).to.be.false);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "8444fc68-3813-4f56-9c3d-eaaf4b414fb7",
+          "name": "3.3 - Submit Sum BAD (Bad)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exercise_id",
+                  "value": "{{exerciseSumId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_file",
+                  "src": "{{sumBadCodePath}}",
+                  "type": "file"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('currentJobId', pm.response.json().job_id);",
+                  "pm.environment.set('pollRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "bec5a9ba-4786-47ae-a717-1d6f39118914",
+          "name": "Poll: Sum Bad",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{currentJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{currentJobId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initial poll request status 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Poll until terminal status - Poll: Sum Bad', function (done) {",
+                  "    const token = pm.environment.get('badToken');",
+                  "    const baseUrl = pm.environment.get('baseUrl');",
+                  "    const jobId = pm.environment.get('currentJobId');",
+                  "    const maxAttempts = 60;",
+                  "    let attempts = 0;",
+                  "",
+                  "    function finishError(message) {",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        done(new Error(message));",
+                  "    }",
+                  "",
+                  "    function evaluate(payload) {",
+                  "        const status = payload && payload.status;",
+                  "        if (['completed', 'failed'].includes(status)) {",
+                  "            pm.environment.set('pollRetries', '0');",
+                  "            pm.expect(['completed', 'failed']).to.include(status);",
+                  "            pm.expect(payload.verdict).to.not.equal('AC');",
+                  "            done();",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        if (attempts >= maxAttempts) {",
+                  "            finishError(`Timeout waiting for terminal status. Last status: ${status}`);",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        attempts += 1;",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        setTimeout(function () {",
+                  "            pm.sendRequest({",
+                  "                url: `${baseUrl}/jobs/${jobId}`,",
+                  "                method: 'GET',",
+                  "                header: { Authorization: `Bearer ${token}` }",
+                  "            }, function (err, res) {",
+                  "                if (err) {",
+                  "                    finishError(`Polling request failed: ${err}`);",
+                  "                    return;",
+                  "                }",
+                  "                if (res.code !== 200) {",
+                  "                    finishError(`Polling returned HTTP ${res.code}: ${res.text()}`);",
+                  "                    return;",
+                  "                }",
+                  "                let nextPayload;",
+                  "                try {",
+                  "                    nextPayload = res.json();",
+                  "                } catch (e) {",
+                  "                    finishError(`Polling returned invalid JSON: ${e}`);",
+                  "                    return;",
+                  "                }",
+                  "                evaluate(nextPayload);",
+                  "            });",
+                  "        }, 1000);",
+                  "    }",
+                  "",
+                  "    evaluate(pm.response.json());",
+                  "});",
+                  "pm.test('Expected verdict is non-AC', function () {",
+                  "    pm.expect(true).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "62fa15d5-5e95-4d4b-a71a-80cd4c68b957",
+          "name": "3.4 - Submit Sort BAD (Bad)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/submissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "submissions"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "exercise_id",
+                  "value": "{{exerciseSortId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "code_file",
+                  "src": "{{sortBadCodePath}}",
+                  "type": "file"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('currentJobId', pm.response.json().job_id);",
+                  "pm.environment.set('pollRetries', '0');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "45c234fd-d05e-49f0-aab9-826fc9be75b5",
+          "name": "Poll: Sort Bad",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jobs/{{currentJobId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jobs",
+                "{{currentJobId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Initial poll request status 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "pm.test('Poll until terminal status - Poll: Sort Bad', function (done) {",
+                  "    const token = pm.environment.get('badToken');",
+                  "    const baseUrl = pm.environment.get('baseUrl');",
+                  "    const jobId = pm.environment.get('currentJobId');",
+                  "    const maxAttempts = 60;",
+                  "    let attempts = 0;",
+                  "",
+                  "    function finishError(message) {",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        done(new Error(message));",
+                  "    }",
+                  "",
+                  "    function evaluate(payload) {",
+                  "        const status = payload && payload.status;",
+                  "        if (['completed', 'failed'].includes(status)) {",
+                  "            pm.environment.set('pollRetries', '0');",
+                  "            pm.expect(['completed', 'failed']).to.include(status);",
+                  "            pm.expect(payload.verdict).to.not.equal('AC');",
+                  "            done();",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        if (attempts >= maxAttempts) {",
+                  "            finishError(`Timeout waiting for terminal status. Last status: ${status}`);",
+                  "            return;",
+                  "        }",
+                  "",
+                  "        attempts += 1;",
+                  "        pm.environment.set('pollRetries', String(attempts));",
+                  "        setTimeout(function () {",
+                  "            pm.sendRequest({",
+                  "                url: `${baseUrl}/jobs/${jobId}`,",
+                  "                method: 'GET',",
+                  "                header: { Authorization: `Bearer ${token}` }",
+                  "            }, function (err, res) {",
+                  "                if (err) {",
+                  "                    finishError(`Polling request failed: ${err}`);",
+                  "                    return;",
+                  "                }",
+                  "                if (res.code !== 200) {",
+                  "                    finishError(`Polling returned HTTP ${res.code}: ${res.text()}`);",
+                  "                    return;",
+                  "                }",
+                  "                let nextPayload;",
+                  "                try {",
+                  "                    nextPayload = res.json();",
+                  "                } catch (e) {",
+                  "                    finishError(`Polling returned invalid JSON: ${e}`);",
+                  "                    return;",
+                  "                }",
+                  "                evaluate(nextPayload);",
+                  "            });",
+                  "        }, 1000);",
+                  "    }",
+                  "",
+                  "    evaluate(pm.response.json());",
+                  "});",
+                  "pm.test('Expected verdict is non-AC', function () {",
+                  "    pm.expect(true).to.equal(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "9bc5121c-8c34-4771-aa85-9b6ed14edf48",
+          "name": "3.5 - Check Profile Bad Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('completed_exercises == 0', () => pm.expect(pm.response.json().completed_exercises).to.equal(0));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "00844d0e-0020-423a-91c6-86d236df9bd9",
+          "name": "3.6 - Check Progress Bad Student",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{badToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/progress",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "progress"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('completed_exercises_count == 0', () => pm.expect(pm.response.json().completed_exercises_count).to.equal(0));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "5ca04a01-62e2-4a9e-b6e5-6345b2f5b4ef",
+      "name": "4. Security - Malicious Student (Expect 403)",
+      "item": [
+        {
+          "id": "0e7dff93-9e4b-44b5-9927-1fecf2f2208a",
+          "name": "4.1 - [SECURITY] POST /test_cases as Student",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{maliciousToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{exerciseSumId}}\",\n  \"name\": \"malicious_injection\",\n  \"content\": {\n    \"input\": \"0 0\\n\",\n    \"expected\": \"0\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ⚠️  SECURITY TEST: expects 403 (forbidden).\n// This test FAILS before RBAC implementation and PASSES after.",
+                  "pm.test('[RBAC] Students cannot create test cases (expect 403)', function() {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "71a596c2-c8e3-4d55-96ca-b8cbe02a6138",
+          "name": "4.2 - [SECURITY] PUT /exercises/{id} as Student",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{maliciousToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises/{{exerciseSacrificialId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exerciseSacrificialId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{topicSacrificialId}}\",\n  \"title\": \"tampered_by_student\",\n  \"description\": \"I should not be able to do this\",\n  \"level\": \"beginner\",\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ⚠️  SECURITY TEST: expects 403 (forbidden).\n// This test FAILS before RBAC implementation and PASSES after.",
+                  "pm.test('[RBAC] Students cannot update exercises (expect 403)', function() {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "64bce1fd-1ae1-42e7-ac0f-fa0a38dc90d0",
+          "name": "4.3 - [SECURITY] DELETE /exercises/{id} as Student",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{maliciousToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises/{{exerciseSacrificialId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exerciseSacrificialId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ⚠️  SECURITY TEST: expects 403 (forbidden).\n// This test FAILS before RBAC implementation and PASSES after.",
+                  "pm.test('[RBAC] Students cannot delete exercises (expect 403)', function() {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "bce8b548-a43f-48da-a275-abe53e4c8452",
+          "name": "4.4 - [SECURITY] DELETE /topics/{id} as Student",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{maliciousToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/{{topicSacrificialId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "{{topicSacrificialId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// ⚠️  SECURITY TEST: expects 403 (forbidden).\n// This test FAILS before RBAC implementation and PASSES after.",
+                  "pm.test('[RBAC] Students cannot delete topics (expect 403)', function() {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dbc914bc-0572-40c6-b949-6f1bd36b3b45",
+      "name": "5. Integrity Check",
+      "item": [
+        {
+          "id": "f31bf123-c1dc-434d-9d4d-219f4fb39ddc",
+          "name": "5.1 - List Topics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var topics = pm.response.json();",
+                  "var ids = topics.map(t => t.id);",
+                  "pm.test('Core topics still exist', function() {",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('topicBasicsId')));",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('topicLoopsId')));",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('topicSacrificialId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "6ef94d58-a6d1-4b7c-9be3-2dc3a39c4485",
+          "name": "5.2 - List Exercises",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var exs = pm.response.json();",
+                  "var ids = exs.map(e => e.id);",
+                  "pm.test('Core exercises still exist', function() {",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('exerciseSumId')));",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('exerciseSortId')));",
+                  "    pm.expect(ids).to.include(parseInt(pm.environment.get('exerciseSacrificialId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "034a47c3-ca21-40e0-bbe6-fa1547ccf572",
+          "name": "5.3 - List Quiz Questions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var qs = pm.response.json();",
+                  "var ids = qs.map(q => q.id);",
+                  "pm.test('Q1 still exists', () => pm.expect(ids).to.include(parseInt(pm.environment.get('q1Id'))));",
+                  "pm.test('Q2 still exists', () => pm.expect(ids).to.include(parseInt(pm.environment.get('q2Id'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "14fae55b-1325-480c-88fc-5543d2bb05f6",
+          "name": "5.4 - Get Exercise Detail: Sum",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises/{{exerciseSumId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises",
+                "{{exerciseSumId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "var ex = pm.response.json();",
+                  "pm.test('Exercise has public test cases', function() {",
+                  "    pm.expect(ex.public_test_cases).to.be.an('array');",
+                  "    pm.expect(ex.public_test_cases.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

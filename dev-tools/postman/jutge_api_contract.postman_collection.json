@@ -1,0 +1,884 @@
+{
+  "info": {
+    "_postman_id": "2f9e503f-a129-41f0-bdb2-87af99f640ea",
+    "name": "Jutge API Contract - Core Endpoints",
+    "description": "Contract-focused API collection for Jutge.\\n\\nGoal:\\n- Validate endpoint contracts (status codes + minimal response shape)\\n- Keep checks stable and fast for PR cadence\\n\\nFolders:\\n- 0. Auth Contract\\n- 1. Teacher Contract\\n- 2. Student Contract\\n- 3. RBAC Contract\\n\\nRun with Newman:\\n  newman run dev-tools/postman/jutge_api_contract.postman_collection.json -e dev-tools/postman/jutge_e2e.local.postman_environment.json",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "professorUsername",
+      "value": "profesor_seed"
+    },
+    {
+      "key": "professorPassword",
+      "value": "profesor123"
+    },
+    {
+      "key": "professorToken",
+      "value": ""
+    },
+    {
+      "key": "studentPassword",
+      "value": "student_pass_123"
+    },
+    {
+      "key": "contractSuffix",
+      "value": ""
+    },
+    {
+      "key": "contractStudentUsername",
+      "value": ""
+    },
+    {
+      "key": "contractStudentEmail",
+      "value": ""
+    },
+    {
+      "key": "contractStudentToken",
+      "value": ""
+    },
+    {
+      "key": "contractTopicName",
+      "value": ""
+    },
+    {
+      "key": "contractTopicId",
+      "value": ""
+    },
+    {
+      "key": "contractExerciseTitle",
+      "value": ""
+    },
+    {
+      "key": "contractExerciseId",
+      "value": ""
+    },
+    {
+      "key": "contractQuizId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Auth Contract",
+      "item": [
+        {
+          "name": "0.1 - Professor Login",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{professorUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{professorPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const professorLoginData = pm.response.json();",
+                  "pm.test('Has access_token', () => pm.expect(professorLoginData.access_token).to.be.a('string'));",
+                  "pm.environment.set('professorToken', professorLoginData.access_token);",
+                  "const suffix = Date.now().toString();",
+                  "pm.environment.set('contractSuffix', suffix);",
+                  "pm.environment.set('contractStudentUsername', `pm_contract_${suffix}`);",
+                  "pm.environment.set('contractStudentEmail', `pm_contract_${suffix}@example.com`);",
+                  "pm.environment.set('contractTopicName', `pm_contract_topic_${suffix}`);",
+                  "pm.environment.set('contractExerciseTitle', `pm_contract_ex_${suffix}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.2 - Professor Me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const me = pm.response.json();",
+                  "pm.test('Me has username', () => pm.expect(me.username).to.be.a('string'));",
+                  "pm.test('Role is teacher', () => pm.expect(me.role).to.eql('teacher'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.3 - Register Contract Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{contractStudentUsername}}\",\n  \"email\": \"{{contractStudentEmail}}\",\n  \"password\": \"{{studentPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const u = pm.response.json();",
+                  "pm.test('User has id', () => pm.expect(u.id).to.exist);",
+                  "pm.test('User role is student', () => pm.expect(u.role).to.eql('student'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "0.4 - Login Contract Student",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "token"
+              ]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "username",
+                  "value": "{{contractStudentUsername}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{studentPassword}}",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const studentLoginData = pm.response.json();",
+                  "pm.test('Has student token', () => pm.expect(studentLoginData.access_token).to.be.a('string'));",
+                  "pm.environment.set('contractStudentToken', studentLoginData.access_token);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "1. Teacher Contract",
+      "item": [
+        {
+          "name": "1.1 - Create Topic (Teacher)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{contractTopicName}}\",\n  \"description\": \"Contract test topic\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const topic = pm.response.json();",
+                  "pm.test('Topic has id', () => pm.expect(topic.id).to.exist);",
+                  "pm.test('Topic name matches', () => pm.expect(topic.name).to.eql(pm.environment.get('contractTopicName')));",
+                  "pm.environment.set('contractTopicId', topic.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.2 - Create Exercise (Teacher)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/exercises",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "exercises"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{contractTopicId}}\",\n  \"title\": \"{{contractExerciseTitle}}\",\n  \"description\": \"Contract test exercise\",\n  \"level\": \"beginner\",\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const ex = pm.response.json();",
+                  "pm.test('Exercise has id', () => pm.expect(ex.id).to.exist);",
+                  "pm.test('Exercise title matches', () => pm.expect(ex.title).to.eql(pm.environment.get('contractExerciseTitle')));",
+                  "pm.environment.set('contractExerciseId', ex.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.3 - Create Test Case (Teacher)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{contractExerciseId}}\",\n  \"name\": \"contract_tc_1\",\n  \"content\": {\n    \"input\": \"1 2\\n\",\n    \"expected\": \"3\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const tc = pm.response.json();",
+                  "pm.test('Test case has id', () => pm.expect(tc.id).to.exist);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.4 - Create Quiz Question (Teacher)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{contractTopicId}}\",\n  \"level\": \"beginner\",\n  \"statement\": \"Contract question?\",\n  \"options\": [\n    \"A\",\n    \"B\",\n    \"C\",\n    \"D\"\n  ],\n  \"correct_option_index\": 0,\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const q = pm.response.json();",
+                  "pm.test('Quiz question has id', () => pm.expect(q.id).to.exist);",
+                  "pm.environment.set('contractQuizId', q.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.5 - List Students (Teacher)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/students",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "students"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.6 - Update Topic (Teacher)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/{{contractTopicId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "{{contractTopicId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{contractTopicName}}_upd\",\n  \"description\": \"Updated in contract suite\",\n  \"required_beginner\": 0,\n  \"required_mid\": 1,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const t = pm.response.json();",
+                  "pm.test('Updated topic id stable', () => pm.expect(String(t.id)).to.eql(String(pm.environment.get('contractTopicId'))));",
+                  "pm.test('Updated topic name suffix', () => pm.expect(t.name).to.include('_upd'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.7 - Topic Students Status (Teacher)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/{{contractTopicId}}/students-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "{{contractTopicId}}",
+                "students-status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Response is array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.8 - Update Quiz Question (Teacher)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{contractQuizId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{contractQuizId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{contractTopicId}}\",\n  \"level\": \"mid\",\n  \"statement\": \"Contract question updated\",\n  \"options\": [\n    \"AA\",\n    \"BB\",\n    \"CC\",\n    \"DD\"\n  ],\n  \"correct_option_index\": 1,\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const q = pm.response.json();",
+                  "pm.test('Question id stable', () => pm.expect(String(q.id)).to.eql(String(pm.environment.get('contractQuizId'))));",
+                  "pm.test('Question statement updated', () => pm.expect(q.statement).to.eql('Contract question updated'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "1.9 - Delete Quiz Question (Teacher)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{professorToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{contractQuizId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{contractQuizId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const res = pm.response.json();",
+                  "pm.test('Delete returns ok=true', () => pm.expect(res.ok).to.eql(true));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Student Contract",
+      "item": [
+        {
+          "name": "Student.1 - GET /me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const me = pm.response.json();",
+                  "pm.test('Student role', () => pm.expect(me.role).to.eql('student'));",
+                  "pm.test('Student username', () => pm.expect(me.username).to.eql(pm.environment.get('contractStudentUsername')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Student.2 - GET /leaderboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/leaderboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "leaderboard"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Leaderboard array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. RBAC Contract",
+      "item": [
+        {
+          "name": "RBAC.1 - Student cannot POST /test_cases",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/test_cases",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "test_cases"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"exercise_id\": \"{{contractExerciseId}}\",\n  \"name\": \"contract_forbidden\",\n  \"content\": {\n    \"input\": \"0 0\\n\",\n    \"expected\": \"0\\n\",\n    \"mode\": \"exact\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RBAC.2 - Student cannot PUT /topics/{id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/{{contractTopicId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "{{contractTopicId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"student_tamper\",\n  \"description\": \"Should fail\",\n  \"required_beginner\": 0,\n  \"required_mid\": 0,\n  \"required_expert\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RBAC.3 - Student cannot GET /topics/{id}/students-status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/topics/{{contractTopicId}}/students-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "topics",
+                "{{contractTopicId}}",
+                "students-status"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RBAC.4 - Student cannot PUT /quiz-questions/{id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{contractQuizId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{contractQuizId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic_id\": \"{{contractTopicId}}\",\n  \"level\": \"beginner\",\n  \"statement\": \"Student tamper\",\n  \"options\": [\n    \"A\",\n    \"B\",\n    \"C\",\n    \"D\"\n  ],\n  \"correct_option_index\": 0,\n  \"is_required\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "RBAC.5 - Student cannot DELETE /quiz-questions/{id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{contractStudentToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/quiz-questions/{{contractQuizId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "quiz-questions",
+                "{{contractQuizId}}"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

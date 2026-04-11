@@ -1,0 +1,22 @@
+{
+  "name": "Ejemplo simple",
+  "description": "Pruebas de ejemplo para un programa que suma dos números",
+  "tests": [
+    {
+      "id": "sum_1",
+      "input": "2 3\n",
+      "mode": "exact",
+      "expected": "5\n",
+      "ignore_whitespace": false,
+      "description": "Suma de 2 y 3"
+    },
+    {
+      "id": "sum_2",
+      "input": "10 20\n",
+      "mode": "exact",
+      "expected": "30\n",
+      "ignore_whitespace": false,
+      "description": "Suma de 10 y 20"
+    }
+  ]
+}
