@@ -5,10 +5,12 @@ STREAMLIT_PID_FILE := .streamlit_admin.pid
 STREAMLIT_LOG_FILE := .streamlit_admin.log
 POSTMAN_ENV := dev-tools/postman/jutge_e2e.local.postman_environment.json
 NEWMAN_IMAGE := postman/newman:alpine
-NEWMAN_DOCKER := docker run --rm --network host -v $(PWD):/etc/newman -w /etc/newman $(NEWMAN_IMAGE)
+NEWMAN_DOCKER := docker run --rm --network host -v $(PWD):$(PWD) -w $(PWD) $(NEWMAN_IMAGE)
 PLAYWRIGHT_TS_DIR := dev-tools/playwright-e2e
+PLAYWRIGHT_IMAGE := mcr.microsoft.com/playwright:v1.59.1-jammy
+PLAYWRIGHT_DOCKER := docker run --rm --network host -u $(shell id -u):$(shell id -g) -v $(PWD):/work -w /work/$(PLAYWRIGHT_TS_DIR) $(PLAYWRIGHT_IMAGE)
 
-.PHONY: help stack-up stack-down stack-logs db-clean db-seed db-reset-seed api-test-base-flow api-test-comprehensive ui-test-streamlit-smoke ui-test-streamlit-smoke-venv playwright-install playwright-install-venv playwright-ts-install playwright-ts-browser-install playwright-ts-setup ui-test-streamlit-smoke-ts ui-test-streamlit-topics-ts ui-test-streamlit-questions-ts ui-test-streamlit-exercises-ts ui-test-streamlit-testcases-ts ui-test-streamlit-smoke-ts-headed ui-test-streamlit-topics-ts-headed ui-test-streamlit-questions-ts-headed ui-test-streamlit-exercises-ts-headed ui-test-streamlit-testcases-ts-headed ui-test-streamlit-ts-all ui-test-streamlit-ts-all-headed newman-contract newman-contract-errors newman-e2e newman-all newman-local-contract newman-local-contract-errors newman-local-e2e newman-local-all newman-docker-contract newman-docker-contract-errors newman-docker-e2e newman-docker-all openapi-export release-runtime release-runtime-version release-runtime-dir release-runtime-dir-version
+.PHONY: help stack-up stack-down stack-logs db-clean db-seed db-reset-seed api-test-base-flow api-test-comprehensive ui-test-streamlit-smoke ui-test-streamlit-smoke-venv playwright-install playwright-install-venv playwright-ts-install playwright-ts-browser-install playwright-ts-setup playwright-ts-docker-install ui-test-streamlit-smoke-ts ui-test-streamlit-topics-ts ui-test-streamlit-questions-ts ui-test-streamlit-exercises-ts ui-test-streamlit-testcases-ts ui-test-streamlit-smoke-ts-headed ui-test-streamlit-topics-ts-headed ui-test-streamlit-questions-ts-headed ui-test-streamlit-exercises-ts-headed ui-test-streamlit-testcases-ts-headed ui-test-streamlit-ts-all ui-test-streamlit-ts-all-headed ui-test-streamlit-smoke-ts-docker ui-test-streamlit-ts-all-docker newman-contract newman-contract-errors newman-e2e newman-all newman-local-contract newman-local-contract-errors newman-local-e2e newman-local-all newman-docker-contract newman-docker-contract-errors newman-docker-e2e newman-docker-all openapi-export release-runtime release-runtime-version release-runtime-dir release-runtime-dir-version publish-runtime-version publish-runtime-version-no-push
 
 help:
 	@echo "Comandos disponibles:"
@@ -34,6 +36,9 @@ help:
 	@echo "  make ui-test-streamlit-testcases-ts # E2E TS: alta manual + JSON de jocs de prova"
 	@echo "  make ui-test-streamlit-ts-all # Ejecuta todas las specs TS del admin"
 	@echo "  make ui-test-streamlit-ts-all-headed # Ejecuta todas las specs TS del admin con navegador visible"
+	@echo "  make playwright-ts-docker-install # Instala dependencias TS con contenedor Playwright"
+	@echo "  make ui-test-streamlit-smoke-ts-docker # Smoke TS del admin via Docker"
+	@echo "  make ui-test-streamlit-ts-all-docker # Suite TS completa del admin via Docker"
 	@echo "  make newman-contract  # Newman dockerizado: contratos core (PR)"
 	@echo "  make newman-contract-errors # Newman dockerizado: contratos negativos (PR)"
 	@echo "  make newman-e2e       # Newman dockerizado: flujo E2E multi-actor"
@@ -44,6 +49,8 @@ help:
 	@echo "  make release-runtime-version VERSION=vX.Y.Z # Genera release con versión fija"
 	@echo "  make release-runtime-dir # Genera carpeta runtime mínima (sin zip)"
 	@echo "  make release-runtime-dir-version VERSION=vX.Y.Z # Genera carpeta release con versión fija"
+	@echo "  make publish-runtime-version VERSION=vX.Y.Z # Sync + commit + tag + push a ../TFG-BACKEND"
+	@echo "  make publish-runtime-version-no-push VERSION=vX.Y.Z # Igual que publish, pero sin push"
 
 stack-up:
 	$(COMPOSE) -f $(COMPOSE_FILE) up -d --build
@@ -101,6 +108,9 @@ playwright-ts-browser-install:
 
 playwright-ts-setup: playwright-ts-install playwright-ts-browser-install
 
+playwright-ts-docker-install:
+	$(PLAYWRIGHT_DOCKER) npm ci
+
 ui-test-streamlit-smoke-ts:
 	cd $(PLAYWRIGHT_TS_DIR) && npx playwright test tests/admin/login-dashboard-smoke.spec.ts
 
@@ -136,6 +146,12 @@ ui-test-streamlit-ts-all:
 
 ui-test-streamlit-ts-all-headed:
 	cd $(PLAYWRIGHT_TS_DIR) && npx playwright test tests/admin --headed
+
+ui-test-streamlit-smoke-ts-docker:
+	$(PLAYWRIGHT_DOCKER) bash -lc "npm ci && npx playwright test tests/admin/login-dashboard-smoke.spec.ts"
+
+ui-test-streamlit-ts-all-docker:
+	$(PLAYWRIGHT_DOCKER) bash -lc "npm ci && npx playwright test tests/admin"
 
 newman-contract:
 	$(NEWMAN_DOCKER) run dev-tools/postman/jutge_api_contract.postman_collection.json -e $(POSTMAN_ENV)
@@ -184,3 +200,9 @@ release-runtime-dir:
 
 release-runtime-dir-version:
 	bash release/build_release_dir.sh $(VERSION)
+
+publish-runtime-version:
+	bash release/publish_runtime_release.sh --version $(VERSION)
+
+publish-runtime-version-no-push:
+	bash release/publish_runtime_release.sh --version $(VERSION) --no-push
