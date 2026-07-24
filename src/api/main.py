@@ -2,11 +2,12 @@ from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, For
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
-from .database import engine, Base, get_db, ensure_phase1_schema
-from .security import create_access_token, get_current_user, require_teacher
+from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema
+from .security import create_access_token, get_current_user, require_teacher, require_student
 
 Base.metadata.create_all(bind=engine)
 ensure_phase1_schema(engine)
+ensure_phase2_multi_subject_schema(engine)
 
 app = FastAPI(
     title="Jutge Mini API",
@@ -86,6 +87,17 @@ JOB_WA_EXAMPLE = {
     "completed_at": "2026-03-12T15:35:12.765432",
 }
 
+
+def _resolve_user_subject_scope(db: Session, user_id: int, subject_id: int | None = None) -> list[int]:
+    enrolled_subject_ids = crud.get_enrolled_subject_ids_for_user(db, user_id)
+    if not enrolled_subject_ids:
+        return []
+    if subject_id is None:
+        return enrolled_subject_ids
+    if subject_id not in enrolled_subject_ids:
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    return [subject_id]
+
 ME_SUBMISSIONS_EXAMPLE = [
     {
         "job_id": 2,
@@ -145,8 +157,12 @@ def register(
         403: {"description": "Solo profesores", "content": {"application/json": {"example": {"detail": "Only teachers can list students"}}}},
     },
 )
-def list_students(current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
-    students = crud.list_students(db)
+def list_students(subject_id: int | None = None, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    if subject_id is not None:
+        _resolve_user_subject_scope(db, current.id, subject_id)
+        students = crud.list_students_by_subject(db, subject_id)
+    else:
+        students = crud.list_students(db)
     return [
         {
             "id": student.id,
@@ -156,6 +172,132 @@ def list_students(current: models.User = Depends(require_teacher), db: Session =
         }
         for student in students
     ]
+
+
+@app.get(
+    "/subjects/me",
+    response_model=list[schemas.SubjectOut],
+    summary="Listar asignaturas inscritas del usuario autenticado",
+)
+def list_my_subjects(current=Depends(get_current_user), db: Session = Depends(get_db)):
+    return crud.list_subjects_for_user(db, current.id)
+
+
+@app.post(
+    "/subjects",
+    response_model=schemas.SubjectOut,
+    summary="Crear asignatura (solo profesor)",
+)
+def create_subject(payload: schemas.SubjectCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    if not payload.code.strip() or not payload.name.strip():
+        raise HTTPException(status_code=400, detail="code and name are required")
+
+    subject = crud.create_subject_with_owner(db, payload, owner_user_id=current.id)
+    if not subject:
+        raise HTTPException(status_code=400, detail="Subject code or name already exists")
+    return subject
+
+
+@app.get(
+    "/subjects/catalog",
+    response_model=list[schemas.SubjectCatalogItem],
+    summary="Catalogo de asignaturas activas con estado de inscripcion",
+)
+def list_subject_catalog(current=Depends(get_current_user), db: Session = Depends(get_db)):
+    return crud.list_subject_catalog_for_user(db, current.id)
+
+
+@app.get(
+    "/subjects/manage",
+    response_model=list[schemas.SubjectCatalogItem],
+    summary="Catalogo de asignaturas para gestion docente",
+)
+def list_subject_manage(current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    return crud.list_subject_catalog_for_user(db, current.id, include_inactive=True)
+
+
+@app.post(
+    "/subjects/{subject_id}/enroll",
+    summary="Inscribir alumno en asignatura",
+)
+def enroll_subject(subject_id: int, payload: schemas.SubjectEnrollRequest, current: models.User = Depends(require_student), db: Session = Depends(get_db)):
+    _, status = crud.enroll_student_in_subject(db, user_id=current.id, subject_id=subject_id, password=payload.password)
+    if status == "subject_not_found":
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if status == "password_required":
+        raise HTTPException(status_code=400, detail="Password required for this subject")
+    if status == "invalid_password":
+        raise HTTPException(status_code=400, detail="Invalid subject password")
+    if status == "already_enrolled":
+        return {"ok": True, "message": "Already enrolled"}
+    return {"ok": True, "message": "Inscripcio completada"}
+
+
+@app.post(
+    "/subjects/{subject_id}/assign-self",
+    summary="Asignar profesor autenticado a una asignatura",
+)
+def assign_teacher_subject(subject_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    _, status = crud.assign_user_to_subject(db, user_id=current.id, subject_id=subject_id)
+    if status == "subject_not_found":
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if status == "already_assigned":
+        return {"ok": True, "message": "Already assigned"}
+    return {"ok": True, "message": "Assigned"}
+
+
+@app.delete(
+    "/subjects/{subject_id}/assign-self",
+    summary="Desasignar profesor autenticado de una asignatura",
+)
+def unassign_teacher_subject(subject_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    removed = crud.unassign_user_from_subject(db, user_id=current.id, subject_id=subject_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return {"ok": True, "message": "Unassigned"}
+
+
+@app.put(
+    "/subjects/{subject_id}/active",
+    response_model=schemas.SubjectOut,
+    summary="Activar/desactivar asignatura (profesor asignado)",
+)
+def update_subject_active(subject_id: int, payload: schemas.SubjectActiveUpdate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    subject = crud.get_subject_by_id(db, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not assigned to subject")
+
+    updated = crud.update_subject_active(db, subject_id, payload.is_active)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    return updated
+
+
+@app.put(
+    "/subjects/{subject_id}/password",
+    response_model=schemas.SubjectOut,
+    summary="Configurar proteccion por password de asignatura (profesor asignado)",
+)
+def update_subject_password(subject_id: int, payload: schemas.SubjectPasswordUpdate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    subject = crud.get_subject_by_id(db, subject_id)
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not assigned to subject")
+
+    updated, status = crud.update_subject_password(
+        db,
+        subject_id=subject_id,
+        requires_password=payload.requires_password,
+        enrollment_password=payload.enrollment_password,
+    )
+    if status == "password_required":
+        raise HTTPException(status_code=400, detail="Password required when protection is enabled")
+    if not updated:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    return updated
 
 
 @app.post(
@@ -193,10 +335,14 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     },
 )
 def create_exercise(ex: schemas.ExerciseCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
-    if ex.topic_id is not None:
-        topic = crud.get_topic_by_id(db, ex.topic_id)
-        if not topic:
-            raise HTTPException(status_code=404, detail="Topic not found")
+    if ex.topic_id is None:
+        raise HTTPException(status_code=400, detail="topic_id is required")
+
+    topic = crud.get_topic_by_id(db, ex.topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
     e = crud.create_exercise(db, ex, creator_id=current.id)
     return {"id": e.id, "title": e.title}
 
@@ -206,8 +352,9 @@ def create_exercise(ex: schemas.ExerciseCreate, current: models.User = Depends(r
     response_model=list[schemas.QuizQuestionOut],
     summary="Listar preguntas tipo test",
 )
-def list_quiz_questions(topic_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
-    return crud.list_quiz_questions(db, topic_id=topic_id)
+def list_quiz_questions(topic_id: int | None = None, subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
+    return crud.list_quiz_questions(db, topic_id=topic_id, subject_ids=subject_ids)
 
 
 @app.post(
@@ -222,8 +369,11 @@ def create_quiz_question(payload: schemas.QuizQuestionCreate, current: models.Us
         raise HTTPException(status_code=400, detail="correct_option_index out of range")
     if payload.level not in {"beginner", "mid", "expert"}:
         raise HTTPException(status_code=400, detail="Invalid level")
-    if not crud.get_topic_by_id(db, payload.topic_id):
+    topic = crud.get_topic_by_id(db, payload.topic_id)
+    if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
 
     return crud.create_quiz_question(db, payload, creator_id=current.id)
 
@@ -241,6 +391,15 @@ def update_quiz_question(question_id: int, payload: schemas.QuizQuestionUpdate, 
     if payload.level not in {"beginner", "mid", "expert"}:
         raise HTTPException(status_code=400, detail="Invalid level")
 
+    question = crud.get_quiz_question_by_id(db, question_id)
+    if not question:
+        raise HTTPException(status_code=404, detail="Quiz question not found")
+    topic_subject_id = crud.get_topic_subject_id(db, int(question.topic_id))
+    if topic_subject_id is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, topic_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     updated = crud.update_quiz_question(db, question_id, payload)
     if not updated:
         raise HTTPException(status_code=404, detail="Quiz question not found")
@@ -252,6 +411,15 @@ def update_quiz_question(question_id: int, payload: schemas.QuizQuestionUpdate, 
     summary="Eliminar pregunta tipo test (solo profesor)",
 )
 def delete_quiz_question(question_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    question = crud.get_quiz_question_by_id(db, question_id)
+    if not question:
+        raise HTTPException(status_code=404, detail="Quiz question not found")
+    topic_subject_id = crud.get_topic_subject_id(db, int(question.topic_id))
+    if topic_subject_id is None:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, topic_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     deleted = crud.delete_quiz_question(db, question_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Quiz question not found")
@@ -267,6 +435,9 @@ def answer_quiz_question(question_id: int, payload: schemas.QuizAnswerCreate, cu
     question = crud.get_quiz_question_by_id(db, question_id)
     if not question:
         raise HTTPException(status_code=404, detail="Quiz question not found")
+    topic_subject_id = crud.get_topic_subject_id(db, int(question.topic_id))
+    if topic_subject_id is None or not crud.is_user_enrolled_in_subject(db, current.id, topic_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
 
     options = question.options or []
     if payload.selected_option_index < 0 or payload.selected_option_index >= len(options):
@@ -294,10 +465,18 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
     if not existing:
         raise HTTPException(status_code=404, detail="Exercise not found")
 
+    current_subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if current_subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, current_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     if ex.topic_id is not None:
         topic = crud.get_topic_by_id(db, ex.topic_id)
         if not topic:
             raise HTTPException(status_code=400, detail="Topic not found")
+        if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
+            raise HTTPException(status_code=403, detail="Not enrolled in subject")
 
     updated = crud.update_exercise(db, exercise_id, ex)
     return {
@@ -319,6 +498,12 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
     },
 )
 def delete_exercise(exercise_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    current_subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if current_subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, current_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     deleted = crud.delete_exercise(db, exercise_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Exercise not found")
@@ -338,9 +523,14 @@ def delete_exercise(exercise_id: int, current: models.User = Depends(require_tea
     },
 )
 def create_topic(topic: schemas.TopicCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    if not crud.get_subject_by_id(db, topic.subject_id):
+        raise HTTPException(status_code=404, detail="Subject not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, topic.subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     db_topic = crud.create_topic(db, topic)
     if db_topic is None:
-        raise HTTPException(status_code=400, detail="Topic name already exists")
+        raise HTTPException(status_code=400, detail="Topic name already exists in subject")
     return db_topic
 
 
@@ -349,8 +539,9 @@ def create_topic(topic: schemas.TopicCreate, current: models.User = Depends(requ
     response_model=list[schemas.TopicOut],
     summary="Listar topics",
 )
-def list_topics(current=Depends(get_current_user), db: Session = Depends(get_db)):
-    return crud.list_topics(db)
+def list_topics(subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
+    return crud.list_topics_for_subjects(db, subject_ids=subject_ids, subject_id=subject_id)
 
 
 @app.put(
@@ -366,6 +557,12 @@ def update_topic(topic_id: int, topic: schemas.TopicUpdate, current: models.User
     existing = crud.get_topic_by_id(db, topic_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(existing.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.get_subject_by_id(db, int(topic.subject_id)):
+        raise HTTPException(status_code=404, detail="Subject not found")
 
     updated = crud.update_topic(db, topic_id, topic)
     if updated is None:
@@ -382,6 +579,12 @@ def update_topic(topic_id: int, topic: schemas.TopicUpdate, current: models.User
     },
 )
 def delete_topic(topic_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    existing = crud.get_topic_by_id(db, topic_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(existing.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     deleted = crud.delete_topic(db, topic_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Topic not found")
@@ -394,6 +597,12 @@ def delete_topic(topic_id: int, current: models.User = Depends(require_teacher),
     summary="Estado de alumnos por tema (solo profesor)",
 )
 def get_topic_students_status(topic_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    topic = crud.get_topic_by_id(db, topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     status_rows = crud.get_topic_students_status(db, topic_id)
     if status_rows is None:
         raise HTTPException(status_code=404, detail="Topic not found")
@@ -408,8 +617,11 @@ def get_topic_students_status(topic_id: int, current: models.User = Depends(requ
         200: {"description": "Listado de ejercicios", "content": {"application/json": {"example": EXERCISES_LIST_EXAMPLE}}},
     },
 )
-def list_exercises(current=Depends(get_current_user), db: Session = Depends(get_db)):
+def list_exercises(subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
     exercises, completed_ids = crud.list_exercises_with_completion(db, current.id)
+    if subject_id is not None:
+        exercises = [ex for ex in exercises if ex.topic_id is not None and crud.get_topic_subject_id(db, int(ex.topic_id)) == subject_id]
     return [
         {
             "id": ex.id,
@@ -436,6 +648,9 @@ def get_exercise(exercise_id: int, current=Depends(get_current_user), db: Sessio
     exercise = crud.get_exercise_by_id(db, exercise_id)
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
+    subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if subject_id is None or not crud.is_user_enrolled_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not authorized")
 
     _, completed_ids = crud.list_exercises_with_completion(db, current.id)
     public_test_cases = crud.get_public_test_cases_for_exercise(db, exercise_id)
@@ -467,6 +682,12 @@ def get_exercise(exercise_id: int, current=Depends(get_current_user), db: Sessio
     },
 )
 def create_test_case(tc: schemas.TestCaseCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    exercise_subject_id = crud.get_exercise_subject_id(db, tc.exercise_id)
+    if exercise_subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if not crud.is_user_enrolled_in_subject(db, current.id, exercise_subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+
     t = crud.create_test_case(db, tc)
     return {"id": t.id, "name": t.name}
 
@@ -501,6 +722,9 @@ async def submit(current=Depends(get_current_user), db: Session = Depends(get_db
     exercise = crud.get_exercise_by_id(db, exercise_id)
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
+    subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if subject_id is None or not crud.is_user_enrolled_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not enrolled in subject")
     
     job = crud.create_job(db, current.id, exercise_id, code_text)
     return {"job_id": job.id, "status": "pending", "message": "Submission queued for evaluation"}
@@ -579,8 +803,9 @@ def get_job_status(job_id: int, current=Depends(get_current_user), db: Session =
         200: {"description": "Ranking global", "content": {"application/json": {"example": LEADERBOARD_EXAMPLE}}},
     },
 )
-def leaderboard(db: Session = Depends(get_db)):
-    rows = crud.get_leaderboard(db)
+def leaderboard(current=Depends(get_current_user), db: Session = Depends(get_db)):
+    subject_ids = crud.get_enrolled_subject_ids_for_user(db, current.id)
+    rows = crud.get_leaderboard(db, subject_ids=subject_ids)
     return [{"user_id": r[0], "username": r[1], "completed_count": r[2], "last_completed_at": r[3].isoformat() if r[3] else None} for r in rows]
 
 
@@ -625,9 +850,10 @@ def get_current_user_profile(current=Depends(get_current_user), db: Session = De
     response_model=schemas.UserProgress,
     summary="Progreso del usuario autenticado",
 )
-def get_current_user_progress(current=Depends(get_current_user), db: Session = Depends(get_db)):
+def get_current_user_progress(subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener estadísticas de progreso del usuario actual."""
-    return crud.get_user_progress(db, current.id)
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
+    return crud.get_user_progress(db, current.id, subject_ids=subject_ids)
 
 
 @app.get(
@@ -638,6 +864,7 @@ def get_current_user_progress(current=Depends(get_current_user), db: Session = D
         200: {"description": "Lista de submissions", "content": {"application/json": {"example": ME_SUBMISSIONS_EXAMPLE}}}
     },
 )
-def get_current_user_submissions(current=Depends(get_current_user), db: Session = Depends(get_db)):
+def get_current_user_submissions(subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener historial de submissions del usuario actual."""
-    return crud.get_user_submissions(db, current.id)
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
+    return crud.get_user_submissions(db, current.id, subject_ids=subject_ids)

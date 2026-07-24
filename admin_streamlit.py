@@ -133,6 +133,7 @@ def ensure_session():
         "default_password": "profesor123",
         "flash_message": None,
         "flash_target": None,
+        "selected_subject_id": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -233,6 +234,33 @@ def render_dashboard():
     # Muestra métricas básicas del sistema y permite crear temas y ejercicios.
     st.title("Tauler d'administració")
     st.caption("Pantalla 2/2: Tauler")
+
+    token = st.session_state.token
+    base_url = st.session_state.base_url
+
+    sb_status, enrolled_subjects = api_get(base_url, "/subjects/me", token)
+    enrolled_subjects = enrolled_subjects if sb_status == 200 and isinstance(enrolled_subjects, list) else []
+    if not enrolled_subjects:
+        st.warning("No tens assignatures inscrites. Contacta amb l'administrador.")
+        return
+
+    subject_options = {
+        f"{subject.get('code') or 'SUBJ'} - {subject.get('name') or 'Sense nom'} (id={subject.get('id')})": subject.get("id")
+        for subject in enrolled_subjects
+        if subject.get("id") is not None
+    }
+    subject_labels = list(subject_options.keys())
+    default_index = 0
+    if st.session_state.selected_subject_id in subject_options.values():
+        selected_label = next((label for label, sid in subject_options.items() if sid == st.session_state.selected_subject_id), subject_labels[0])
+        default_index = subject_labels.index(selected_label)
+
+    st.markdown("### Assignatura")
+    selected_subject_label = st.selectbox("Assignatura activa", options=subject_labels, index=default_index)
+    selected_subject_id = int(subject_options[selected_subject_label])
+    st.session_state.selected_subject_id = selected_subject_id
+    subject_query = f"?subject_id={selected_subject_id}"
+
     show_queued_flash("top")
 
     col_a, col_b = st.columns([4, 1])
@@ -243,15 +271,12 @@ def render_dashboard():
             logout()
             st.rerun()
 
-    token = st.session_state.token
-    base_url = st.session_state.base_url
-
     # Carga inicial de datos para renderizar todo el tablero en una sola pasada.
     # Si alguna llamada falla, degradamos a lista vacía y mostramos mensajes en cada bloque.
-    ex_status, exercises = api_get(base_url, "/exercises", token)
-    tp_status, topics = api_get(base_url, "/topics", token)
-    st_status, students = api_get(base_url, "/students", token)
-    qq_status, quiz_questions = api_get(base_url, "/quiz-questions", token)
+    ex_status, exercises = api_get(base_url, f"/exercises{subject_query}", token)
+    tp_status, topics = api_get(base_url, f"/topics{subject_query}", token)
+    st_status, students = api_get(base_url, f"/students{subject_query}", token)
+    qq_status, quiz_questions = api_get(base_url, f"/quiz-questions{subject_query}", token)
     # lb_status, leaderboard = api_get(base_url, "/leaderboard", token)
 
     exercises = exercises if ex_status == 200 and isinstance(exercises, list) else []
@@ -350,6 +375,7 @@ def render_dashboard():
 
                     if has_changes:
                         payload = {
+                            "subject_id": selected_subject_id,
                             "name": new_name,
                             "description": new_description or None,
                             "weight": new_weight,
@@ -419,6 +445,7 @@ def render_dashboard():
                         base_url,
                         "/topics",
                         {
+                            "subject_id": selected_subject_id,
                             "name": topic_name.strip(),
                             "description": topic_description.strip() or None,
                             "weight": float(topic_weight),
@@ -464,6 +491,7 @@ def render_dashboard():
                             continue
                         try:
                             payload = {
+                                "subject_id": selected_subject_id,
                                 "name": name,
                                 "description": (str(item.get("description") or "").strip() or None),
                                 "weight": float(item.get("weight", 1.0)),

@@ -44,9 +44,26 @@ def create_student(db, username: str, email: str, password: str) -> models.User:
     return student
 
 
+def create_subject(db, *, code: str, name: str, is_active: bool = True) -> models.Subject:
+    subject = models.Subject(code=code, name=name, is_active=is_active)
+    db.add(subject)
+    db.commit()
+    db.refresh(subject)
+    return subject
+
+
+def enroll_user_in_subject(db, *, user_id: int, subject_id: int) -> models.UserSubjectEnrollment:
+    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(enrollment)
+    return enrollment
+
+
 def create_topic(
     db,
     *,
+    subject_id: int,
     name: str,
     description: str,
     weight: float,
@@ -55,6 +72,7 @@ def create_topic(
     required_expert: int = 0,
 ) -> models.Topic:
     topic = models.Topic(
+        subject_id=subject_id,
         name=name,
         description=description,
         weight=weight,
@@ -209,6 +227,20 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
             password=teacher_password,
         )
 
+        paco_subject = create_subject(
+            db,
+            code="PACO",
+            name="Programacio Avancada en C",
+        )
+        adso_subject = create_subject(
+            db,
+            code="ADSO",
+            name="Administracio de Sistemes i Xarxes",
+        )
+
+        enroll_user_in_subject(db, user_id=teacher.id, subject_id=paco_subject.id)
+        enroll_user_in_subject(db, user_id=teacher.id, subject_id=adso_subject.id)
+
         perfect_student = create_student(
             db,
             username="alumno_perfecto",
@@ -221,9 +253,20 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
             email="alumno_falla@jutge.local",
             password="alumno123",
         )
+        basic_student = create_student(
+            db,
+            username="alumno_a_base",
+            email="alumno_a_base@example.com",
+            password="alumno123",
+        )
+
+        enroll_user_in_subject(db, user_id=perfect_student.id, subject_id=paco_subject.id)
+        enroll_user_in_subject(db, user_id=failing_student.id, subject_id=paco_subject.id)
+        enroll_user_in_subject(db, user_id=basic_student.id, subject_id=paco_subject.id)
 
         basics_topic = create_topic(
             db,
+            subject_id=paco_subject.id,
             name="Basics",
             description="Tema inicial amb càlcul bàsic i preguntes senzilles.",
             weight=1.0,
@@ -233,6 +276,7 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
         )
         process_topic = create_topic(
             db,
+            subject_id=paco_subject.id,
             name="Processos",
             description="Tema de processos i ordenació.",
             weight=1.0,
@@ -242,6 +286,7 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
         )
         empty_topic = create_topic(
             db,
+            subject_id=paco_subject.id,
             name="Signals",
             description="Tema de prova sense preguntes tipus test.",
             weight=1.0,
@@ -386,6 +431,9 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
 
         print("Seed completado ✅")
         print(f"Profesor: id={teacher.id}, username={teacher.username}, email={teacher.email}")
+        print(f"Asignatura PACO: id={paco_subject.id}, code={paco_subject.code}")
+        print(f"Asignatura ADSO: id={adso_subject.id}, code={adso_subject.code} (sin temas ni alumnos)")
+        print(f"Alumno base: id={basic_student.id}, username={basic_student.username}")
         print(f"Alumno perfecto: id={perfect_student.id}, username={perfect_student.username}")
         print(f"Alumno fallo: id={failing_student.id}, username={failing_student.username}")
         print(f"Tema Basics: id={basics_topic.id}, ejercicio math id={math_exercise.id}, tests={math_count}, preguntas={len(basics_questions)}")

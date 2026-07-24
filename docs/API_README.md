@@ -2,10 +2,27 @@
 
 FastAPI + SQLAlchemy para:
 - Registrar/login usuarios (JWT)
+- Gestionar asignaturas e inscripciones por usuario
 - Consultar ejercicios y test cases públicos
 - Enviar submissions de código
 - Ver estadísticas personales y leaderboard
 - Gestión de jobs asincrónico
+
+## Actualizacion 2026-07-03 - Scope por asignatura
+
+La API ahora filtra contenido academico por asignatura inscrita.
+
+- Nuevo endpoint: `GET /subjects/me` (asignaturas del usuario autenticado)
+- Endpoints con soporte de `subject_id` por query:
+  - `GET /topics?subject_id=...`
+  - `GET /exercises?subject_id=...`
+  - `GET /quiz-questions?subject_id=...`
+  - `GET /me/progress?subject_id=...`
+  - `GET /me/submissions?subject_id=...`
+- `POST /topics` requiere `subject_id` en payload.
+- `POST /exercises` requiere `topic_id` para mantener scope de asignatura.
+
+Si el usuario no esta inscrito en la asignatura consultada, la API responde `403`.
 
 ---
 
@@ -35,7 +52,7 @@ http://localhost:8000/docs  # Swagger interactivo
 
 ## Autenticación
 
-Todos los endpoints (excepto `/users`, `/token`, `/leaderboard`) requieren JWT en el header:
+Todos los endpoints (excepto `/users`, `/token`) requieren JWT en el header:
 
 ```bash
 Authorization: Bearer <token>
@@ -124,6 +141,124 @@ username=alumno_a_base&password=alumno123
 
 **Errores:**
 - `400` - Credenciales incorrectas
+
+---
+
+## Endpoints de Asignaturas
+
+Estos endpoints cubren creacion, catalogo, inscripcion de alumnado y gestion docente de asignaturas.
+
+### GET `/subjects/me` - Asignaturas del usuario autenticado
+
+**Headers:**
+```
+Authorization: Bearer <token>
+```
+
+**Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "code": "PACO",
+    "name": "Programacion y Comunicacion",
+    "is_active": true,
+    "requires_password": false
+  }
+]
+```
+
+### GET `/subjects/catalog` - Catalogo para alumnado
+
+Lista asignaturas activas con flags de estado para el usuario autenticado.
+
+**Response (200):**
+```json
+[
+  {
+    "id": 1,
+    "code": "PACO",
+    "name": "Programacion y Comunicacion",
+    "is_active": true,
+    "is_enrolled": true,
+    "is_assigned": false,
+    "requires_password": false
+  },
+  {
+    "id": 2,
+    "code": "ADSO",
+    "name": "Administracion de Sistemas",
+    "is_active": true,
+    "is_enrolled": false,
+    "is_assigned": false,
+    "requires_password": true
+  }
+]
+```
+
+### POST `/subjects/{id}/enroll` - Inscripcion de alumno
+
+**Role requerida:** `student`
+
+**Request:**
+```json
+{
+  "password": "clave_opcional"
+}
+```
+
+**Response (200):**
+```json
+{
+  "ok": true,
+  "message": "Inscripcio completada"
+}
+```
+
+**Errores:**
+- `404` - Asignatura no encontrada
+- `400` - Password requerida o password invalida
+
+### POST `/subjects` - Crear asignatura (PROFESOR)
+
+**Role requerida:** `teacher`
+
+Al crear, el profesor queda asignado automaticamente a la nueva asignatura.
+
+**Request:**
+```json
+{
+  "code": "SOD",
+  "name": "Sistemas Operativos Distribuidos",
+  "enrollment_password": "opcional"
+}
+```
+
+### GET `/subjects/manage` - Catalogo para gestion docente
+
+**Role requerida:** `teacher`
+
+Incluye asignaturas activas e inactivas, y el estado `is_assigned` para el profesor autenticado.
+
+### POST `/subjects/{id}/assign-self` - Autoasignarse como profesor
+
+**Role requerida:** `teacher`
+
+### DELETE `/subjects/{id}/assign-self` - Desasignarse como profesor
+
+**Role requerida:** `teacher`
+
+### PUT `/subjects/{id}/active` - Activar/desactivar asignatura
+
+**Role requerida:** `teacher` asignado en la asignatura.
+
+### PUT `/subjects/{id}/password` - Configurar password de inscripcion
+
+**Role requerida:** `teacher` asignado en la asignatura.
+
+Request esperado:
+- `requires_password=true` requiere `enrollment_password` no vacia.
+- `requires_password=false` elimina proteccion de password.
 
 ---
 

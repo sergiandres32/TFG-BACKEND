@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 from src import judge_v2
 from src.api.models import Base, Job, Run, UserExerciseCompletion, RunVerdict, JobStatus
 from src.api.database import SessionLocal
+import hashlib
 
 
 def evaluate_job_docker(job_id: int, user_id: int, exercise_id: int, code: str, db: sessionmaker, timeout: int = 5):
@@ -119,6 +120,18 @@ def process_job(job: Job, db_session_factory):
         passed = verdict_str == "AC"
         
         # Crear Run
+        # Read the latest job row in this DB session to ensure code is available
+        fresh_job = db.query(Job).filter(Job.id == job.id).first()
+        submitted_code = (fresh_job.code if fresh_job and fresh_job.code is not None else (job.code or ""))
+
+        # Log a short excerpt of the submitted code, include a short preview and a SHA256
+        excerpt = (submitted_code or "")[:400]
+        print(f"[Worker] job={job.id} submitted_code_excerpt={excerpt!r}", flush=True)
+        code_preview = (submitted_code or "")[:1000]
+        code_hash = hashlib.sha256((submitted_code or "").encode("utf-8")).hexdigest() if submitted_code else None
+
+        print(f"[Worker] job={job.id} preview_len={len(code_preview)} sha={code_hash}", flush=True)
+
         db_run = Run(
             user_id=job.user_id,
             exercise_id=job.exercise_id,
@@ -128,6 +141,8 @@ def process_job(job: Job, db_session_factory):
                 "results": judge_result.get("results"),
                 "compile_error": judge_result.get("compile_error"),
             },
+            code_preview=code_preview,
+            code_sha256=code_hash,
             duration_ms=judge_result.get("duration_ms")
         )
         db.add(db_run)

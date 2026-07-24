@@ -67,18 +67,29 @@ def run_in_docker(code_file: str, tests_file: str, memory: str = "512m", cpus: s
     print()
     
     # Comando docker run con límites de recursos
+    # If caller passed --debug in argv, expose it inside the container via env var
+    debug_flag = "--debug" in sys.argv
+
     cmd = [
         "docker", "run",
         "--rm",                              # Eliminar contenedor al terminar
         f"--memory={memory}",                # Límite de memoria
         f"--cpus={cpus}",                   # Límite de CPUs
+    ]
+
+    if debug_flag:
+        cmd += ["-e", "JUDGE_DEBUG=1"]
+
+    cmd += [
         "--network=none",                    # Sin acceso a red
         "-v", f"{code_abs}:{code_in_container}:ro",
         "-v", f"{tests_abs}:{tests_in_container}:ro",
         "-v", f"{project_root}/src:/judge/src:ro",
         "jutge:latest",
+        "python3",
+        "/judge/src/judge_container_runner.py",
         code_in_container,
-        tests_in_container
+        tests_in_container,
     ]
     
     print("Ejecutando contenedor...")
@@ -96,6 +107,7 @@ def main(argv):
     parser.add_argument("--memory", default="512m", help="Límite de memoria (defecto: 512m)")
     parser.add_argument("--cpus", default="1", help="CPUs asignadas (defecto: 1)")
     parser.add_argument("--build", action="store_true", help="Construir imagen Docker antes")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode inside container")
     
     args = parser.parse_args(argv)
     

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Enum, JSON, Float
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Enum, JSON, Float, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -21,6 +21,24 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class Subject(Base):
+    __tablename__ = "subjects"
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, nullable=False)
+    name = Column(String, unique=True, nullable=False)
+    enrollment_password_hash = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UserSubjectEnrollment(Base):
+    __tablename__ = "user_subject_enrollments"
+    __table_args__ = (UniqueConstraint("user_id", "subject_id", name="uq_user_subject_enrollment"),)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class ExerciseLevel(str, enum.Enum):
     beginner = "beginner"
     mid = "mid"
@@ -29,8 +47,10 @@ class ExerciseLevel(str, enum.Enum):
 
 class Topic(Base):
     __tablename__ = "topics"
+    __table_args__ = (UniqueConstraint("subject_id", "name", name="uq_topic_subject_name"),)
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String, nullable=False)
     description = Column(String, nullable=True)
     weight = Column(Float, nullable=False, default=1.0)
     required_beginner = Column(Integer, nullable=False, default=0)
@@ -103,6 +123,9 @@ class Run(Base):
     duration_ms = Column(Integer, nullable=True)
     memory_kb = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # Optional traceability fields for submitted code
+    code_preview = Column(String, nullable=True)
+    code_sha256 = Column(String, nullable=True)
 
 
 class UserExerciseCompletion(Base):

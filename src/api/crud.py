@@ -3,6 +3,7 @@ from . import models, schemas
 from passlib.context import CryptContext
 from sqlalchemy.exc import IntegrityError
 import json
+import hashlib
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -18,6 +19,34 @@ def create_user(db: Session, user: schemas.UserCreate):
     try:
         db.commit()
         db.refresh(db_user)
+
+        # Default enrollment keeps legacy UX: newly registered users can see one subject.
+        default_subject = (
+            db.query(models.Subject)
+            .filter(models.Subject.is_active == True, models.Subject.code != "LEGACY")
+            .order_by(models.Subject.id.asc())
+            .first()
+        )
+        if not default_subject:
+            default_subject = (
+                db.query(models.Subject)
+                .filter(models.Subject.is_active == True)
+                .order_by(models.Subject.id.asc())
+                .first()
+            )
+        if default_subject:
+            existing = (
+                db.query(models.UserSubjectEnrollment)
+                .filter(
+                    models.UserSubjectEnrollment.user_id == db_user.id,
+                    models.UserSubjectEnrollment.subject_id == default_subject.id,
+                )
+                .first()
+            )
+            if not existing:
+                db.add(models.UserSubjectEnrollment(user_id=db_user.id, subject_id=default_subject.id))
+                db.commit()
+
         return db_user
     except IntegrityError:
         db.rollback()
@@ -39,6 +68,211 @@ def list_students(db: Session):
         .filter(models.User.role == models.RoleEnum.student)
         .order_by(models.User.id.asc())
         .all()
+    )
+
+
+def list_students_by_subject(db: Session, subject_id: int):
+    return (
+        db.query(models.User)
+        .join(models.UserSubjectEnrollment, models.UserSubjectEnrollment.user_id == models.User.id)
+        .filter(
+            models.User.role == models.RoleEnum.student,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .order_by(models.User.id.asc())
+        .all()
+    )
+
+
+def get_subject_by_id(db: Session, subject_id: int):
+    return db.query(models.Subject).filter(models.Subject.id == subject_id).first()
+
+
+def list_subjects_for_user(db: Session, user_id: int):
+    subjects = (
+        db.query(models.Subject)
+        .join(models.UserSubjectEnrollment, models.UserSubjectEnrollment.subject_id == models.Subject.id)
+        .filter(models.UserSubjectEnrollment.user_id == user_id, models.Subject.is_active == True)
+        .order_by(models.Subject.id.asc())
+        .all()
+    )
+    non_legacy = [subject for subject in subjects if str(subject.code).upper() != "LEGACY"]
+    return non_legacy if non_legacy else subjects
+
+
+def create_subject_with_owner(db: Session, payload: schemas.SubjectCreate, owner_user_id: int):
+    password = (payload.enrollment_password or "").strip()
+    password_hash = pwd_context.hash(password) if password else None
+
+    subject = models.Subject(
+        code=payload.code.strip(),
+        name=payload.name.strip(),
+        is_active=bool(payload.is_active),
+        enrollment_password_hash=password_hash,
+    )
+    db.add(subject)
+    try:
+        db.commit()
+        db.refresh(subject)
+    except IntegrityError:
+        db.rollback()
+        return None
+
+    existing = (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == owner_user_id,
+            models.UserSubjectEnrollment.subject_id == subject.id,
+        )
+        .first()
+    )
+    if not existing:
+        db.add(models.UserSubjectEnrollment(user_id=owner_user_id, subject_id=subject.id))
+        db.commit()
+
+    return subject
+
+
+def list_subject_catalog_for_user(db: Session, user_id: int, include_inactive: bool = False):
+    query = db.query(models.Subject)
+    if not include_inactive:
+        query = query.filter(models.Subject.is_active == True)
+    subjects = query.order_by(models.Subject.id.asc()).all()
+    enrolled_ids = set(get_enrolled_subject_ids_for_user(db, user_id))
+    rows = []
+    for subject in subjects:
+        rows.append(
+            {
+                "id": subject.id,
+                "code": subject.code,
+                "name": subject.name,
+                "is_active": bool(subject.is_active),
+                "is_enrolled": subject.id in enrolled_ids,
+                "requires_password": bool(subject.enrollment_password_hash),
+            }
+        )
+    return rows
+
+
+def assign_user_to_subject(db: Session, user_id: int, subject_id: int):
+    subject = get_subject_by_id(db, subject_id)
+    if not subject:
+        return None, "subject_not_found"
+
+    existing = (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+    )
+    if existing:
+        return existing, "already_assigned"
+
+    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(enrollment)
+    return enrollment, "assigned"
+
+
+def unassign_user_from_subject(db: Session, user_id: int, subject_id: int):
+    enrollment = (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+    )
+    if not enrollment:
+        return False
+
+    db.delete(enrollment)
+    db.commit()
+    return True
+
+
+def update_subject_active(db: Session, subject_id: int, is_active: bool):
+    subject = get_subject_by_id(db, subject_id)
+    if not subject:
+        return None
+    subject.is_active = bool(is_active)
+    db.commit()
+    db.refresh(subject)
+    return subject
+
+
+def update_subject_password(db: Session, subject_id: int, requires_password: bool, enrollment_password: str | None):
+    subject = get_subject_by_id(db, subject_id)
+    if not subject:
+        return None, "subject_not_found"
+
+    if not requires_password:
+        subject.enrollment_password_hash = None
+        db.commit()
+        db.refresh(subject)
+        return subject, "updated"
+
+    password = (enrollment_password or "").strip()
+    if not password:
+        return None, "password_required"
+
+    subject.enrollment_password_hash = pwd_context.hash(password)
+    db.commit()
+    db.refresh(subject)
+    return subject, "updated"
+
+
+def enroll_student_in_subject(db: Session, user_id: int, subject_id: int, password: str | None):
+    subject = get_subject_by_id(db, subject_id)
+    if not subject or not bool(subject.is_active):
+        return None, "subject_not_found"
+
+    existing = (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+    )
+    if existing:
+        return existing, "already_enrolled"
+
+    if subject.enrollment_password_hash:
+        provided = (password or "").strip()
+        if not provided:
+            return None, "password_required"
+        if not pwd_context.verify(provided, subject.enrollment_password_hash):
+            return None, "invalid_password"
+
+    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+    db.add(enrollment)
+    db.commit()
+    db.refresh(enrollment)
+    return enrollment, "enrolled"
+
+
+def get_enrolled_subject_ids_for_user(db: Session, user_id: int) -> list[int]:
+    rows = (
+        db.query(models.UserSubjectEnrollment.subject_id)
+        .filter(models.UserSubjectEnrollment.user_id == user_id)
+        .all()
+    )
+    return [int(row.subject_id) for row in rows]
+
+
+def is_user_enrolled_in_subject(db: Session, user_id: int, subject_id: int) -> bool:
+    return (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+        is not None
     )
 
 
@@ -90,8 +324,17 @@ def get_topic_by_name(db: Session, name: str):
     return db.query(models.Topic).filter(models.Topic.name == name).first()
 
 
+def get_topic_by_name_and_subject(db: Session, subject_id: int, name: str):
+    return (
+        db.query(models.Topic)
+        .filter(models.Topic.subject_id == subject_id, models.Topic.name == name)
+        .first()
+    )
+
+
 def create_topic(db: Session, topic: schemas.TopicCreate):
     db_topic = models.Topic(
+        subject_id=topic.subject_id,
         name=topic.name,
         description=topic.description,
         weight=topic.weight,
@@ -113,11 +356,21 @@ def list_topics(db: Session):
     return db.query(models.Topic).order_by(models.Topic.id.asc()).all()
 
 
+def list_topics_for_subjects(db: Session, subject_ids: list[int], subject_id: int | None = None):
+    if not subject_ids:
+        return []
+    query = db.query(models.Topic).filter(models.Topic.subject_id.in_(subject_ids))
+    if subject_id is not None:
+        query = query.filter(models.Topic.subject_id == subject_id)
+    return query.order_by(models.Topic.id.asc()).all()
+
+
 def update_topic(db: Session, topic_id: int, topic_data: schemas.TopicUpdate):
     topic = get_topic_by_id(db, topic_id)
     if not topic:
         return None
 
+    topic.subject_id = topic_data.subject_id
     topic.name = topic_data.name
     topic.description = topic_data.description
     topic.weight = topic_data.weight
@@ -152,7 +405,17 @@ def get_exercise_by_id(db: Session, exercise_id: int):
 
 
 def list_exercises_with_completion(db: Session, user_id: int):
-    exercises = db.query(models.Exercise).order_by(models.Exercise.id.asc()).all()
+    subject_ids = get_enrolled_subject_ids_for_user(db, user_id)
+    if not subject_ids:
+        return [], set()
+
+    exercises = (
+        db.query(models.Exercise)
+        .join(models.Topic, models.Topic.id == models.Exercise.topic_id)
+        .filter(models.Topic.subject_id.in_(subject_ids))
+        .order_by(models.Exercise.id.asc())
+        .all()
+    )
     completed_ids = {
         row.exercise_id
         for row in db.query(models.UserExerciseCompletion.exercise_id)
@@ -183,11 +446,30 @@ def get_quiz_question_by_id(db: Session, question_id: int):
     return db.query(models.QuizQuestion).filter(models.QuizQuestion.id == question_id).first()
 
 
-def list_quiz_questions(db: Session, topic_id: int | None = None):
-    query = db.query(models.QuizQuestion)
+def list_quiz_questions(db: Session, topic_id: int | None = None, subject_ids: list[int] | None = None):
+    query = db.query(models.QuizQuestion).join(models.Topic, models.Topic.id == models.QuizQuestion.topic_id)
+    if subject_ids is not None:
+        if not subject_ids:
+            return []
+        query = query.filter(models.Topic.subject_id.in_(subject_ids))
     if topic_id is not None:
         query = query.filter(models.QuizQuestion.topic_id == topic_id)
     return query.order_by(models.QuizQuestion.id.asc()).all()
+
+
+def get_topic_subject_id(db: Session, topic_id: int) -> int | None:
+    row = db.query(models.Topic.subject_id).filter(models.Topic.id == topic_id).first()
+    return int(row.subject_id) if row else None
+
+
+def get_exercise_subject_id(db: Session, exercise_id: int) -> int | None:
+    row = (
+        db.query(models.Topic.subject_id)
+        .join(models.Exercise, models.Exercise.topic_id == models.Topic.id)
+        .filter(models.Exercise.id == exercise_id)
+        .first()
+    )
+    return int(row.subject_id) if row else None
 
 
 def create_quiz_question(db: Session, payload: schemas.QuizQuestionCreate, creator_id: int):
@@ -337,11 +619,17 @@ def create_run(db: Session, user_id: int, submission: schemas.SubmissionCreate):
     return db_run
 
 
-def get_leaderboard(db: Session, limit: int = 50):
+def get_leaderboard(db: Session, limit: int = 50, subject_ids: list[int] | None = None):
     # count completions per user and latest completion timestamp
     from sqlalchemy import func
     q = db.query(models.User.id, models.User.username, func.count(models.UserExerciseCompletion.exercise_id).label('completed_count'), func.max(models.UserExerciseCompletion.completed_at).label('last_completed_at'))
     q = q.join(models.UserExerciseCompletion, models.User.id == models.UserExerciseCompletion.user_id, isouter=True)
+    if subject_ids is not None:
+        if not subject_ids:
+            return []
+        q = q.join(models.Exercise, models.Exercise.id == models.UserExerciseCompletion.exercise_id, isouter=True)
+        q = q.join(models.Topic, models.Topic.id == models.Exercise.topic_id, isouter=True)
+        q = q.filter((models.Topic.subject_id.in_(subject_ids)) | (models.Topic.subject_id.is_(None)))
     q = q.group_by(models.User.id, models.User.username).order_by(func.count(models.UserExerciseCompletion.exercise_id).desc(), func.coalesce(func.max(models.UserExerciseCompletion.completed_at),'1970-01-01').asc())
     return q.limit(limit).all()
 
@@ -392,6 +680,10 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
     passed = verdict_str == "AC"
     
     # Crear run en DB
+    # Add a short preview and hash of the submitted code for traceability
+    code_preview = (code or "")[:1000]
+    code_hash = hashlib.sha256((code or "").encode("utf-8")).hexdigest() if code else None
+
     db_run = models.Run(
         user_id=user_id,
         exercise_id=exercise_id,
@@ -401,6 +693,8 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
             "results": judge_result.get("results"),
             "compile_error": judge_result.get("compile_error"),
         },
+        code_preview=code_preview,
+        code_sha256=code_hash,
         duration_ms=judge_result.get("duration_ms")
     )
     db.add(db_run)
@@ -523,14 +817,29 @@ def get_user_leaderboard_rank(db: Session, user_id: int):
     return None, 0
 
 
-def get_user_progress(db: Session, user_id: int):
+def get_user_progress(db: Session, user_id: int, subject_ids: list[int] | None = None):
     """
     Retorna estadísticas de progreso del usuario.
     """
     from sqlalchemy import func
     
     # Total de ejercicios
-    total_exercises = db.query(func.count(models.Exercise.id)).scalar() or 0
+    exercises_query = db.query(models.Exercise.id)
+    if subject_ids is not None:
+        if not subject_ids:
+            return {
+                "completed_exercises_count": 0,
+                "total_exercises": 0,
+                "total_attempts": 0,
+                "completion_rate": 0.0,
+                "completed_exercises": [],
+            }
+        exercises_query = (
+            exercises_query
+            .join(models.Topic, models.Topic.id == models.Exercise.topic_id)
+            .filter(models.Topic.subject_id.in_(subject_ids))
+        )
+    total_exercises = exercises_query.count() or 0
     
     # Ejercicios completados por el usuario
     completed = db.query(
@@ -541,12 +850,23 @@ def get_user_progress(db: Session, user_id: int):
     ).join(
         models.Exercise,
         models.UserExerciseCompletion.exercise_id == models.Exercise.id
-    ).filter(models.UserExerciseCompletion.user_id == user_id).all()
+    ).filter(models.UserExerciseCompletion.user_id == user_id)
+    if subject_ids is not None:
+        completed = completed.join(models.Topic, models.Topic.id == models.Exercise.topic_id).filter(models.Topic.subject_id.in_(subject_ids))
+    completed = completed.all()
     
     completed_count = len(completed)
     
     # Total de attempts del usuario
-    total_attempts = db.query(func.count(models.Run.id)).filter(models.Run.user_id == user_id).scalar() or 0
+    attempts_query = db.query(func.count(models.Run.id)).filter(models.Run.user_id == user_id)
+    if subject_ids is not None:
+        attempts_query = (
+            attempts_query
+            .join(models.Exercise, models.Exercise.id == models.Run.exercise_id)
+            .join(models.Topic, models.Topic.id == models.Exercise.topic_id)
+            .filter(models.Topic.subject_id.in_(subject_ids))
+        )
+    total_attempts = attempts_query.scalar() or 0
     
     completion_rate = completed_count / total_exercises if total_exercises > 0 else 0.0
     
@@ -569,7 +889,7 @@ def get_user_progress(db: Session, user_id: int):
     }
 
 
-def get_user_submissions(db: Session, user_id: int, limit: int = 50):
+def get_user_submissions(db: Session, user_id: int, limit: int = 50, subject_ids: list[int] | None = None):
     """
     Retorna historial de submissions (jobs) del usuario.
     """
@@ -582,7 +902,12 @@ def get_user_submissions(db: Session, user_id: int, limit: int = 50):
     ).join(
         models.Exercise,
         models.Job.exercise_id == models.Exercise.id
-    ).filter(models.Job.user_id == user_id).order_by(models.Job.created_at.desc()).limit(limit).all()
+    ).filter(models.Job.user_id == user_id)
+    if subject_ids is not None:
+        if not subject_ids:
+            return []
+        jobs = jobs.join(models.Topic, models.Topic.id == models.Exercise.topic_id).filter(models.Topic.subject_id.in_(subject_ids))
+    jobs = jobs.order_by(models.Job.created_at.desc()).limit(limit).all()
     
     submissions = []
     for job_id, exercise_id, exercise_title, status, created_at in jobs:

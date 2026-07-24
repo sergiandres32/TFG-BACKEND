@@ -5,7 +5,7 @@ An automated grading system for C programming exercises with strict evaluation, 
 ## Quick Start
 
 ```bash
-# 1) Levanta API + PostgreSQL + Worker + Streamlit admin en background
+# 1) Levanta API + PostgreSQL + Worker + Streamlit admin + student en background
 make stack-up
 
 # 2) En otra terminal: reinicia DB y carga datos seed (profesor, alumnos, topics, ejercicios, test cases)
@@ -14,16 +14,19 @@ make db-reset-seed
 # 3) API docs (Swagger)
 http://localhost:8000/docs
 
-# 4) Panel admin Streamlit
+# 4) Panel admin Streamlit (profesor)
 http://localhost:8501
 
-# 5) Suite E2E API completa (Newman en Docker)
+# 5) Panel student Streamlit (alumno)
+http://localhost:8502
+
+# 6) Suite E2E API completa (Newman en Docker)
 make newman-docker-all
 ```
 
 Resumen rapido de comandos:
 
-- make stack-up: arranca el stack Docker y deja Streamlit corriendo en segundo plano.
+- make stack-up: arranca el stack Docker y deja Streamlit (admin y student) corriendo en segundo plano.
 - make db-reset-seed: limpia y vuelve a sembrar la base de datos para empezar desde estado conocido.
 - make newman-docker-all: ejecuta contratos + errores + flujo E2E multi-actor usando colecciones Postman.
 
@@ -95,6 +98,15 @@ For detailed guides, see the `docs/` folder:
 Important UX note:
 - Streamlit `data_editor` may not commit a cell if the user clicks save while the cell is still active.
 - Mitigation implemented: explicit inline hint (“prem Enter o fes clic fora...”) and contextual success messages shown below the component that triggered the action.
+
+## Student Submission Panel (Streamlit)
+
+`student_streamlit.py` provides a student-facing submission page with:
+
+- Login de alumno vía `/token`.
+- Listado de ejercicios con estado de completado.
+- Envío de archivo `.c` para evaluación asíncrona (`/submissions`).
+- Historial de entregas del alumno (`/me/submissions`).
 
 ## Development
 

@@ -1,8 +1,12 @@
 COMPOSE_FILE := docker-compose-api.yml
 COMPOSE := docker-compose
 PYTHON := python3
-STREAMLIT_PID_FILE := .streamlit_admin.pid
-STREAMLIT_LOG_FILE := .streamlit_admin.log
+STREAMLIT_ADMIN_PID_FILE := .streamlit_admin.pid
+STREAMLIT_ADMIN_LOG_FILE := .streamlit_admin.log
+STREAMLIT_STUDENT_PID_FILE := .streamlit_student.pid
+STREAMLIT_STUDENT_LOG_FILE := .streamlit_student.log
+STREAMLIT_SUBJECTS_PID_FILE := .streamlit_subjects.pid
+STREAMLIT_SUBJECTS_LOG_FILE := .streamlit_subjects.log
 POSTMAN_ENV := dev-tools/postman/jutge_e2e.local.postman_environment.json
 NEWMAN_IMAGE := postman/newman:alpine
 NEWMAN_DOCKER := docker run --rm --network host -v $(PWD):$(PWD) -w $(PWD) $(NEWMAN_IMAGE)
@@ -10,12 +14,12 @@ PLAYWRIGHT_TS_DIR := dev-tools/playwright-e2e
 PLAYWRIGHT_IMAGE := mcr.microsoft.com/playwright:v1.59.1-jammy
 PLAYWRIGHT_DOCKER := docker run --rm --network host -u $(shell id -u):$(shell id -g) -v $(PWD):/work -w /work/$(PLAYWRIGHT_TS_DIR) $(PLAYWRIGHT_IMAGE)
 
-.PHONY: help stack-up stack-down stack-logs db-clean db-seed db-reset-seed api-test-base-flow api-test-comprehensive ui-test-streamlit-smoke ui-test-streamlit-smoke-venv playwright-install playwright-install-venv playwright-ts-install playwright-ts-browser-install playwright-ts-setup playwright-ts-docker-install ui-test-streamlit-smoke-ts ui-test-streamlit-topics-ts ui-test-streamlit-questions-ts ui-test-streamlit-exercises-ts ui-test-streamlit-testcases-ts ui-test-streamlit-smoke-ts-headed ui-test-streamlit-topics-ts-headed ui-test-streamlit-questions-ts-headed ui-test-streamlit-exercises-ts-headed ui-test-streamlit-testcases-ts-headed ui-test-streamlit-ts-all ui-test-streamlit-ts-all-headed ui-test-streamlit-smoke-ts-docker ui-test-streamlit-ts-all-docker newman-contract newman-contract-errors newman-e2e newman-all newman-local-contract newman-local-contract-errors newman-local-e2e newman-local-all newman-docker-contract newman-docker-contract-errors newman-docker-e2e newman-docker-all openapi-export release-runtime release-runtime-version release-runtime-dir release-runtime-dir-version publish-runtime-version publish-runtime-version-no-push
+.PHONY: help stack-up stack-down stack-logs ui-test-streamlit-student-smoke ui-test-streamlit-student-smoke-venv db-clean db-seed db-reset-seed api-test-base-flow api-test-comprehensive ui-test-streamlit-smoke ui-test-streamlit-smoke-venv playwright-install playwright-install-venv playwright-ts-install playwright-ts-browser-install playwright-ts-setup playwright-ts-docker-install ui-test-streamlit-smoke-ts ui-test-streamlit-topics-ts ui-test-streamlit-questions-ts ui-test-streamlit-exercises-ts ui-test-streamlit-testcases-ts ui-test-streamlit-smoke-ts-headed ui-test-streamlit-topics-ts-headed ui-test-streamlit-questions-ts-headed ui-test-streamlit-exercises-ts-headed ui-test-streamlit-testcases-ts-headed ui-test-streamlit-ts-all ui-test-streamlit-ts-all-headed ui-test-streamlit-smoke-ts-docker ui-test-streamlit-ts-all-docker newman-contract newman-contract-errors newman-e2e newman-all newman-local-contract newman-local-contract-errors newman-local-e2e newman-local-all newman-docker-contract newman-docker-contract-errors newman-docker-e2e newman-docker-all openapi-export release-runtime release-runtime-version release-runtime-dir release-runtime-dir-version publish-runtime-version publish-runtime-version-no-push
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make stack-up         # Levanta API + worker + DB y arranca Streamlit admin en background"
-	@echo "  make stack-down       # Apaga stack Docker y detiene Streamlit admin en background"
+	@echo "  make stack-up         # Levanta API + worker + DB y arranca Streamlit admin + student + subjects en background"
+	@echo "  make stack-down       # Apaga stack Docker y detiene Streamlit admin + student + subjects en background"
 	@echo "  make stack-logs       # Muestra logs en tiempo real del stack"
 	@echo "  make db-clean         # Limpia DB (drop/create tablas)"
 	@echo "  make db-seed          # Carga profesor + ejercicios + test cases"
@@ -24,8 +28,10 @@ help:
 	@echo "  make api-test-comprehensive # Suite E2E completa: profesor + 3 alumnos + seguridad"
 	@echo "  make playwright-install # Instala navegador Chromium para Playwright"
 	@echo "  make playwright-install-venv # Instala Chromium usando .venv/bin/python"
-	@echo "  make ui-test-streamlit-smoke # Smoke test UI de Streamlit (Playwright)"
-	@echo "  make ui-test-streamlit-smoke-venv # Smoke test UI usando .venv/bin/python"
+	@echo "  make ui-test-streamlit-smoke # Smoke test UI de Streamlit admin (Playwright)"
+	@echo "  make ui-test-streamlit-smoke-venv # Smoke test UI admin usando .venv/bin/python"
+	@echo "  make ui-test-streamlit-student-smoke # Smoke test UI de Streamlit alumno (Playwright)"
+	@echo "  make ui-test-streamlit-student-smoke-venv # Smoke test UI alumno usando .venv/bin/python"
 	@echo "  make playwright-ts-install # Instala dependencias npm de Playwright TS"
 	@echo "  make playwright-ts-browser-install # Instala Chromium para la suite TS"
 	@echo "  make playwright-ts-setup # Ejecuta install + browser-install para la suite TS"
@@ -54,20 +60,44 @@ help:
 
 stack-up:
 	$(COMPOSE) -f $(COMPOSE_FILE) up -d --build
-	@if [ -f $(STREAMLIT_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_PID_FILE)) 2>/dev/null; then \
-		echo "Streamlit admin ya esta en ejecucion (PID $$(cat $(STREAMLIT_PID_FILE)))."; \
+	@if [ -f $(STREAMLIT_ADMIN_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_ADMIN_PID_FILE)) 2>/dev/null; then \
+		echo "Streamlit admin ya esta en ejecucion (PID $$(cat $(STREAMLIT_ADMIN_PID_FILE)))."; \
 	else \
-		nohup $(PYTHON) -m streamlit run admin_streamlit.py > $(STREAMLIT_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_PID_FILE); \
-		echo "Streamlit admin lanzado en background (PID $$(cat $(STREAMLIT_PID_FILE)))."; \
-		echo "Logs: tail -f $(STREAMLIT_LOG_FILE)"; \
+		nohup $(PYTHON) -m streamlit run admin_streamlit.py --server.port 8501 > $(STREAMLIT_ADMIN_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_ADMIN_PID_FILE); \
+		echo "Streamlit admin lanzado en background (PID $$(cat $(STREAMLIT_ADMIN_PID_FILE)))."; \
+		echo "Logs: tail -f $(STREAMLIT_ADMIN_LOG_FILE)"; \
+	fi
+	@if [ -f $(STREAMLIT_STUDENT_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_STUDENT_PID_FILE)) 2>/dev/null; then \
+		echo "Streamlit student ya esta en ejecucion (PID $$(cat $(STREAMLIT_STUDENT_PID_FILE)))."; \
+	else \
+		nohup $(PYTHON) -m streamlit run student_streamlit.py --server.port 8502 > $(STREAMLIT_STUDENT_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_STUDENT_PID_FILE); \
+		echo "Streamlit student lanzado en background (PID $$(cat $(STREAMLIT_STUDENT_PID_FILE)))."; \
+		echo "Logs: tail -f $(STREAMLIT_STUDENT_LOG_FILE)"; \
+	fi
+	@if [ -f $(STREAMLIT_SUBJECTS_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)) 2>/dev/null; then \
+		echo "Streamlit subjects ya esta en ejecucion (PID $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)))."; \
+	else \
+		nohup $(PYTHON) -m streamlit run subjects_streamlit.py --server.port 8503 > $(STREAMLIT_SUBJECTS_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_SUBJECTS_PID_FILE); \
+		echo "Streamlit subjects lanzado en background (PID $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)))."; \
+		echo "Logs: tail -f $(STREAMLIT_SUBJECTS_LOG_FILE)"; \
 	fi
 
 stack-down:
 	$(COMPOSE) -f $(COMPOSE_FILE) down
-	@if [ -f $(STREAMLIT_PID_FILE) ]; then \
-		kill $$(cat $(STREAMLIT_PID_FILE)) 2>/dev/null || true; \
-		rm -f $(STREAMLIT_PID_FILE); \
+	@if [ -f $(STREAMLIT_ADMIN_PID_FILE) ]; then \
+		kill $$(cat $(STREAMLIT_ADMIN_PID_FILE)) 2>/dev/null || true; \
+		rm -f $(STREAMLIT_ADMIN_PID_FILE); \
 		echo "Streamlit admin detenido."; \
+	fi
+	@if [ -f $(STREAMLIT_STUDENT_PID_FILE) ]; then \
+		kill $$(cat $(STREAMLIT_STUDENT_PID_FILE)) 2>/dev/null || true; \
+		rm -f $(STREAMLIT_STUDENT_PID_FILE); \
+		echo "Streamlit student detenido."; \
+	fi
+	@if [ -f $(STREAMLIT_SUBJECTS_PID_FILE) ]; then \
+		kill $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)) 2>/dev/null || true; \
+		rm -f $(STREAMLIT_SUBJECTS_PID_FILE); \
+		echo "Streamlit subjects detenido."; \
 	fi
 
 stack-logs:
@@ -99,6 +129,12 @@ ui-test-streamlit-smoke:
 
 ui-test-streamlit-smoke-venv:
 	.venv/bin/python dev-tools/test_streamlit_ui_smoke.py
+
+ui-test-streamlit-student-smoke:
+	$(PYTHON) dev-tools/test_streamlit_student_smoke.py
+
+ui-test-streamlit-student-smoke-venv:
+	.venv/bin/python dev-tools/test_streamlit_student_smoke.py
 
 playwright-ts-install:
 	cd $(PLAYWRIGHT_TS_DIR) && npm ci

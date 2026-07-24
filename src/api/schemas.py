@@ -191,6 +191,7 @@ class ExerciseDetail(BaseModel):
 
 
 class TopicCreate(BaseModel):
+    subject_id: int
     name: str
     description: Optional[str] = None
     weight: float = 1.0
@@ -201,6 +202,7 @@ class TopicCreate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "subject_id": 1,
                 "name": "Punteros",
                 "description": "Tema sobre punteros en C",
                 "weight": 2.0,
@@ -211,6 +213,7 @@ class TopicCreate(BaseModel):
 
 class TopicOut(BaseModel):
     id: int
+    subject_id: int
     name: str
     description: Optional[str] = None
     weight: float
@@ -223,6 +226,7 @@ class TopicOut(BaseModel):
         json_schema_extra={
             "example": {
                 "id": 1,
+                "subject_id": 1,
                 "name": "Punteros",
                 "description": "Tema sobre punteros en C",
                 "weight": 2.0,
@@ -232,6 +236,7 @@ class TopicOut(BaseModel):
 
 
 class TopicUpdate(BaseModel):
+    subject_id: int
     name: str
     description: Optional[str] = None
     weight: float = 1.0
@@ -242,12 +247,72 @@ class TopicUpdate(BaseModel):
     model_config = ConfigDict(
         json_schema_extra={
             "example": {
+                "subject_id": 1,
                 "name": "Punteros",
                 "description": "Tema actualizado de punteros en C",
                 "weight": 2.5,
             }
         }
     )
+
+
+class SubjectOut(BaseModel):
+    id: int
+    code: str
+    name: str
+    is_active: bool
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "example": {
+                "id": 1,
+                "code": "PACO",
+                "name": "Programacion Avanzada en C",
+                "is_active": True,
+            }
+        },
+    )
+
+
+class SubjectCreate(BaseModel):
+    code: str
+    name: str
+    is_active: bool = True
+    enrollment_password: Optional[str] = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "code": "SISTEMAS",
+                "name": "Administracion de Sistemas",
+                "is_active": True,
+                "enrollment_password": "optional-pass",
+            }
+        }
+    )
+
+
+class SubjectCatalogItem(BaseModel):
+    id: int
+    code: str
+    name: str
+    is_active: bool
+    is_enrolled: bool
+    requires_password: bool
+
+
+class SubjectEnrollRequest(BaseModel):
+    password: Optional[str] = None
+
+
+class SubjectActiveUpdate(BaseModel):
+    is_active: bool
+
+
+class SubjectPasswordUpdate(BaseModel):
+    requires_password: bool
+    enrollment_password: Optional[str] = None
 
 
 class TestCaseCreate(BaseModel):

@@ -52,26 +52,47 @@ def run_executable(exec_path: str, input_data: str, timeout: int = 5) -> Dict[st
     """
     try:
         start = time.time()
+        # Capture bytes and decode with replacement to avoid decoding exceptions
         proc = subprocess.run(
             [exec_path],
-            input=input_data,
+            input=input_data.encode('utf-8'),
             capture_output=True,
-            text=True,
             timeout=timeout
         )
         duration = time.time() - start
+        try:
+            stdout = proc.stdout.decode('utf-8', errors='replace') if isinstance(proc.stdout, (bytes, bytearray)) else str(proc.stdout)
+        except Exception:
+            stdout = ''
+        try:
+            stderr = proc.stderr.decode('utf-8', errors='replace') if isinstance(proc.stderr, (bytes, bytearray)) else str(proc.stderr)
+        except Exception:
+            stderr = ''
         return {
-            "stdout": proc.stdout,
-            "stderr": proc.stderr,
+            "stdout": stdout,
+            "stderr": stderr,
             "exit_code": proc.returncode,
             "timed_out": False,
             "oom_killed": False,
             "time": duration,
         }
     except subprocess.TimeoutExpired as e:
+        # e.stdout/e.stderr may be bytes
+        stdout = ''
+        stderr = ''
+        try:
+            if getattr(e, 'stdout', None) is not None:
+                stdout = e.stdout.decode('utf-8', errors='replace') if isinstance(e.stdout, (bytes, bytearray)) else str(e.stdout)
+        except Exception:
+            stdout = ''
+        try:
+            if getattr(e, 'stderr', None) is not None:
+                stderr = e.stderr.decode('utf-8', errors='replace') if isinstance(e.stderr, (bytes, bytearray)) else str(e.stderr)
+        except Exception:
+            stderr = ''
         return {
-            "stdout": e.stdout or "",
-            "stderr": e.stderr or "",
+            "stdout": stdout,
+            "stderr": stderr,
             "exit_code": -1,
             "timed_out": True,
             "oom_killed": False,

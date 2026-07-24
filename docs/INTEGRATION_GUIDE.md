@@ -1,5 +1,38 @@
 # 🚀 Integración Judge + API: Guía completa
 
+## Novedad 2026-07-03: Integracion por asignatura
+
+Antes de listar temas/ejercicios, el cliente debe consultar las asignaturas del usuario:
+
+1. `GET /subjects/me`
+2. Elegir `subject_id` activo en UI
+3. Consumir contenido filtrado:
+  - `GET /topics?subject_id=...`
+  - `GET /exercises?subject_id=...`
+  - `GET /quiz-questions?subject_id=...`
+  - `GET /me/progress?subject_id=...`
+  - `GET /me/submissions?subject_id=...`
+
+Si se consulta una asignatura no inscrita, la API retorna `403`.
+
+### Flujo de descubrimiento e inscripcion (alumnado)
+
+```mermaid
+flowchart TD
+  A[Login student] --> B[GET /subjects/catalog]
+  B --> C{Asignatura requiere password?}
+  C -- No --> D[POST /subjects/{id}/enroll]
+  C -- Si --> E[Alumno introduce password]
+  E --> D
+  D --> F[GET /subjects/me]
+  F --> G[Seleccionar subject_id activo]
+  G --> H[Consumir topics/exercises/progress por subject_id]
+```
+
+Respuestas utiles de `POST /subjects/{id}/enroll`:
+- Inscripcion nueva: `{"ok": true, "message": "Inscripcio completada"}`
+- Ya inscrito: `{"ok": true, "message": "Already enrolled"}`
+
 ## 📊 Códigos de Error Explicados
 
 | Código | Significado | Ejemplo |
