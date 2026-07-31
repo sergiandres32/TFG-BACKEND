@@ -144,6 +144,54 @@ username=alumno_a_base&password=alumno123
 
 ---
 
+## Endpoints LTI (Atenea / Moodle)
+
+Integracion inicial seria con LTI 1.1 (OAuth 1.0 HMAC-SHA1) para auto-provisioning y mapeo por contexto.
+
+### POST `/lti/platforms` - Crear/actualizar plataforma LTI (solo profesor)
+
+Permite configurar `consumer_key` y `consumer_secret` del LMS.
+
+**Request:**
+```json
+{
+  "name": "atenea-upc",
+  "consumer_key": "atenea-adso-2026",
+  "consumer_secret": "atenea-secret-2026",
+  "is_active": true
+}
+```
+
+### GET `/lti/platforms` - Listar plataformas LTI (solo profesor)
+
+Devuelve configuraciones LTI activas/inactivas para administracion.
+
+### POST `/lti/launch` - Launch LTI 1.1
+
+Endpoint de entrada desde Atenea (form POST firmado por OAuth 1.0).
+
+Comportamiento:
+- Valida firma OAuth (`HMAC-SHA1`).
+- Resuelve/crea usuario interno desde `user_id` LMS.
+- Resuelve/crea asignatura por `context_id` (auto-creacion solo si launch instructor).
+- Matricula usuario en asignatura con `role_in_subject`.
+- Devuelve JWT interno para continuar flujo normal Jutge.
+
+Respuesta ejemplo:
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "user_id": 12,
+  "username": "atenea_teacher_1001",
+  "role": "teacher",
+  "subject_id": 5,
+  "role_in_subject": "teacher"
+}
+```
+
+---
+
 ## Endpoints de Asignaturas
 
 Estos endpoints cubren creacion, catalogo, inscripcion de alumnado y gestion docente de asignaturas.

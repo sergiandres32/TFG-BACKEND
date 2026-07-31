@@ -26,9 +26,68 @@ make newman-docker-all
 
 Resumen rapido de comandos:
 
-- make stack-up: arranca el stack Docker y deja Streamlit (admin y student) corriendo en segundo plano.
+- make stack-up: arranca el stack Docker completo (API, PostgreSQL, worker, Streamlit admin, student y subjects).
 - make db-reset-seed: limpia y vuelve a sembrar la base de datos para empezar desde estado conocido.
 - make newman-docker-all: ejecuta contratos + errores + flujo E2E multi-actor usando colecciones Postman.
+
+## Funcionamiento con Atenea sin deploy
+
+Este flujo permite probar LTI con Atenea desde tu maquina local, sin desplegar en servidor.
+
+1. Levanta el stack local:
+
+```bash
+make stack-up
+make db-reset-seed
+```
+
+2. Expone una URL publica HTTPS con ngrok:
+
+```bash
+ngrok http 8080 --region eu
+```
+
+Si no usas router/nginx unico, usa dos tuneles:
+
+```bash
+ngrok http 8000 --region eu
+ngrok http 8502 --region eu
+```
+
+3. Configura `.env` con la URL publica de la UI student:
+
+```env
+LTI_UI_BASE_URL=https://TU-URL-PUBLICA-UI/student
+```
+
+4. Reinicia stack si cambias `.env`:
+
+```bash
+make stack-down
+make stack-up
+```
+
+5. En Atenea (herramienta externa):
+- Launch URL: `https://TU-URL-PUBLICA-API/lti/launch`
+- Consumer key: la misma configurada en Jutge
+- Shared secret: la misma configurada en Jutge
+
+6. Valida el launch tecnico:
+
+```bash
+python3 dev-tools/test_lti_launch_flow.py \
+	--base-url https://TU-URL-PUBLICA \
+	--platform-name atenea-upc \
+	--consumer-key jutge-key \
+	--consumer-secret jutge-secret
+```
+
+Regla rapida:
+- Sin Atenea (solo pruebas locales): no hace falta ngrok.
+- Con Atenea real: ngrok es obligatorio para exponer una URL publica.
+
+Guia completa paso a paso:
+- [ATENEA LTI RUNBOOK](docs/ATENEA_LTI_RUNBOOK.md)
 
 ## Project Structure
 

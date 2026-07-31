@@ -1,5 +1,6 @@
 import html
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -126,7 +127,7 @@ def parse_json_items(raw_json: str):
 def ensure_session():
     # Inicializa valores por defecto de sesión para configuración y autenticación.
     defaults = {
-        "base_url": "http://localhost:8000",
+        "base_url": os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000"),
         "token": None,
         "profile": None,
         "default_username": "profesor_seed",

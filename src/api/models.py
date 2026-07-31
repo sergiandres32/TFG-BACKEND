@@ -36,6 +36,55 @@ class UserSubjectEnrollment(Base):
     __table_args__ = (UniqueConstraint("user_id", "subject_id", name="uq_user_subject_enrollment"),)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), primary_key=True)
+    role_in_subject = Column(Enum(RoleEnum), default=RoleEnum.student, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LtiPlatform(Base):
+    __tablename__ = "lti_platforms"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    consumer_key = Column(String, unique=True, nullable=False)
+    consumer_secret = Column(String, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LtiUserLink(Base):
+    __tablename__ = "lti_user_links"
+    __table_args__ = (UniqueConstraint("platform_id", "lti_user_id", name="uq_lti_user_platform"),)
+    id = Column(Integer, primary_key=True, index=True)
+    platform_id = Column(Integer, ForeignKey("lti_platforms.id", ondelete="CASCADE"), nullable=False, index=True)
+    lti_user_id = Column(String, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class LtiContextSubjectLink(Base):
+    __tablename__ = "lti_context_subject_links"
+    __table_args__ = (UniqueConstraint("platform_id", "context_id", name="uq_lti_context_platform"),)
+    id = Column(Integer, primary_key=True, index=True)
+    platform_id = Column(Integer, ForeignKey("lti_platforms.id", ondelete="CASCADE"), nullable=False, index=True)
+    context_id = Column(String, nullable=False)
+    context_title = Column(String, nullable=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LtiLaunchEvent(Base):
+    __tablename__ = "lti_launch_events"
+    id = Column(Integer, primary_key=True, index=True)
+    platform_id = Column(Integer, ForeignKey("lti_platforms.id", ondelete="SET NULL"), nullable=True, index=True)
+    lti_user_id = Column(String, nullable=True)
+    context_id = Column(String, nullable=True)
+    resource_link_id = Column(String, nullable=True)
+    roles = Column(String, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True, index=True)
+    outcome = Column(String, nullable=False)
+    details = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

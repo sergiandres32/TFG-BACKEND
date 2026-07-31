@@ -33,6 +33,31 @@ Respuestas utiles de `POST /subjects/{id}/enroll`:
 - Inscripcion nueva: `{"ok": true, "message": "Inscripcio completada"}`
 - Ya inscrito: `{"ok": true, "message": "Already enrolled"}`
 
+## Novedad 2026-07-24: Launch LTI 1.1 (Atenea)
+
+Jutge incorpora endpoint de launch LTI para integracion con Moodle/Atenea.
+
+Flujo resumido:
+
+1. Profesor configura plataforma LTI (`POST /lti/platforms`) con `consumer_key` y `consumer_secret`.
+2. Atenea envia POST firmado a `POST /lti/launch`.
+3. Jutge valida OAuth 1.0 (`HMAC-SHA1`).
+4. Jutge mapea `user_id` LMS a usuario interno (auto-crea si no existe).
+5. Jutge mapea `context_id` a asignatura interna:
+  - Instructor: puede auto-crear asignatura/contexto si no existe mapeo.
+  - Student: requiere mapeo ya existente.
+6. Jutge devuelve JWT interno para consumir API normal.
+
+Claims LTI usados actualmente:
+- `oauth_consumer_key`
+- `user_id`
+- `roles`
+- `context_id`
+- `context_title`
+- `resource_link_id`
+- `lis_person_contact_email_primary` (opcional)
+- `lis_person_name_full` / `ext_user_username`
+
 ## 📊 Códigos de Error Explicados
 
 | Código | Significado | Ejemplo |

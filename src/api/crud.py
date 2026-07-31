@@ -4,12 +4,240 @@ from passlib.context import CryptContext
 from sqlalchemy.exc import IntegrityError
 import json
 import hashlib
+import secrets
+import re
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+def _slugify_for_username(raw: str, max_len: int = 24) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", (raw or "").strip()).strip("_").lower()
+    if not cleaned:
+        cleaned = "lti_user"
+    return cleaned[:max_len]
+
+
 def get_user_by_username(db: Session, username: str):
     return db.query(models.User).filter(models.User.username == username).first()
+
+
+def upsert_lti_platform(db: Session, payload: schemas.LtiPlatformCreate):
+    existing = db.query(models.LtiPlatform).filter(models.LtiPlatform.name == payload.name.strip()).first()
+    if existing:
+        existing.consumer_key = payload.consumer_key.strip()
+        existing.consumer_secret = payload.consumer_secret
+        existing.is_active = bool(payload.is_active)
+        db.commit()
+        db.refresh(existing)
+        return existing
+
+    platform = models.LtiPlatform(
+        name=payload.name.strip(),
+        consumer_key=payload.consumer_key.strip(),
+        consumer_secret=payload.consumer_secret,
+        is_active=bool(payload.is_active),
+    )
+    db.add(platform)
+    try:
+        db.commit()
+        db.refresh(platform)
+        return platform
+    except IntegrityError:
+        db.rollback()
+        return None
+
+
+def list_lti_platforms(db: Session):
+    return db.query(models.LtiPlatform).order_by(models.LtiPlatform.id.asc()).all()
+
+
+def get_active_lti_platform_by_consumer_key(db: Session, consumer_key: str):
+    return (
+        db.query(models.LtiPlatform)
+        .filter(models.LtiPlatform.consumer_key == consumer_key, models.LtiPlatform.is_active == True)
+        .first()
+    )
+
+
+def get_lti_context_subject_link(db: Session, platform_id: int, context_id: str):
+    return (
+        db.query(models.LtiContextSubjectLink)
+        .filter(
+            models.LtiContextSubjectLink.platform_id == platform_id,
+            models.LtiContextSubjectLink.context_id == context_id,
+            models.LtiContextSubjectLink.is_active == True,
+        )
+        .first()
+    )
+
+
+def _create_lti_backed_user(db: Session, platform_name: str, lti_user_id: str, display_name: str, email: str | None, role: models.RoleEnum):
+    username_base = _slugify_for_username(f"{platform_name}_{lti_user_id}")
+    username = username_base
+    suffix = 1
+    while get_user_by_username(db, username):
+        username = f"{username_base}_{suffix}"
+        suffix += 1
+
+    normalized_email = (email or "").strip().lower()
+    if not normalized_email:
+        normalized_email = f"{username}@lti.local"
+    else:
+        existing_email = db.query(models.User).filter(models.User.email == normalized_email).first()
+        if existing_email:
+            normalized_email = f"{username}@lti.local"
+
+    random_password = secrets.token_urlsafe(32)
+    password_hash = pwd_context.hash(random_password)
+    user = models.User(
+        username=username,
+        email=normalized_email,
+        password_hash=password_hash,
+        role=role,
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def resolve_or_create_lti_user(
+    db: Session,
+    platform: models.LtiPlatform,
+    lti_user_id: str,
+    display_name: str,
+    email: str | None,
+    is_instructor: bool,
+):
+    link = (
+        db.query(models.LtiUserLink)
+        .filter(models.LtiUserLink.platform_id == platform.id, models.LtiUserLink.lti_user_id == lti_user_id)
+        .first()
+    )
+    if link:
+        user = db.query(models.User).filter(models.User.id == link.user_id).first()
+        if user:
+            # Keep teacher privilege if ever received from LMS.
+            if is_instructor and user.role != models.RoleEnum.teacher:
+                user.role = models.RoleEnum.teacher
+            db.commit()
+            return user
+
+    role = models.RoleEnum.teacher if is_instructor else models.RoleEnum.student
+    user = _create_lti_backed_user(
+        db,
+        platform_name=platform.name,
+        lti_user_id=lti_user_id,
+        display_name=display_name,
+        email=email,
+        role=role,
+    )
+    link = models.LtiUserLink(platform_id=platform.id, lti_user_id=lti_user_id, user_id=user.id)
+    db.add(link)
+    db.commit()
+    return user
+
+
+def resolve_or_create_subject_for_lti_context(
+    db: Session,
+    platform: models.LtiPlatform,
+    context_id: str,
+    context_title: str | None,
+    allow_auto_create: bool,
+):
+    mapping = get_lti_context_subject_link(db, platform.id, context_id)
+    if mapping:
+        subject = get_subject_by_id(db, int(mapping.subject_id))
+        if subject and bool(subject.is_active):
+            return subject, mapping, "existing"
+
+    if not allow_auto_create:
+        return None, None, "missing_mapping"
+
+    code_base = _slugify_for_username(f"LTI_{platform.name}_{context_id}", max_len=32).upper()
+    code = code_base or "LTI_CTX"
+    idx = 1
+    while db.query(models.Subject).filter(models.Subject.code == code).first() is not None:
+        code = f"{code_base[:28]}_{idx}"
+        idx += 1
+
+    name = (context_title or f"LTI {context_id}").strip()[:120]
+    if not name:
+        name = f"LTI {context_id}"
+
+    subject = models.Subject(code=code, name=name, is_active=True, enrollment_password_hash=None)
+    db.add(subject)
+    db.commit()
+    db.refresh(subject)
+
+    mapping = models.LtiContextSubjectLink(
+        platform_id=platform.id,
+        context_id=context_id,
+        context_title=context_title,
+        subject_id=subject.id,
+        is_active=True,
+    )
+    db.add(mapping)
+    db.commit()
+    db.refresh(mapping)
+    return subject, mapping, "created"
+
+
+def upsert_user_subject_enrollment_role(db: Session, user_id: int, subject_id: int, role_in_subject: models.RoleEnum):
+    enrollment = (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+    )
+    if not enrollment:
+        enrollment = models.UserSubjectEnrollment(
+            user_id=user_id,
+            subject_id=subject_id,
+            role_in_subject=role_in_subject,
+        )
+        db.add(enrollment)
+        db.commit()
+        db.refresh(enrollment)
+        return enrollment
+
+    enrollment.role_in_subject = role_in_subject
+    db.commit()
+    db.refresh(enrollment)
+    return enrollment
+
+
+def create_lti_launch_event(
+    db: Session,
+    *,
+    platform_id: int | None,
+    lti_user_id: str | None,
+    context_id: str | None,
+    resource_link_id: str | None,
+    roles: str | None,
+    user_id: int | None,
+    subject_id: int | None,
+    outcome: str,
+    details: dict | None = None,
+):
+    event = models.LtiLaunchEvent(
+        platform_id=platform_id,
+        lti_user_id=lti_user_id,
+        context_id=context_id,
+        resource_link_id=resource_link_id,
+        roles=roles,
+        user_id=user_id,
+        subject_id=subject_id,
+        outcome=outcome,
+        details=details,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
 
 
 def create_user(db: Session, user: schemas.UserCreate):
@@ -44,7 +272,13 @@ def create_user(db: Session, user: schemas.UserCreate):
                 .first()
             )
             if not existing:
-                db.add(models.UserSubjectEnrollment(user_id=db_user.id, subject_id=default_subject.id))
+                db.add(
+                    models.UserSubjectEnrollment(
+                        user_id=db_user.id,
+                        subject_id=default_subject.id,
+                        role_in_subject=models.RoleEnum.student,
+                    )
+                )
                 db.commit()
 
         return db_user
@@ -127,7 +361,13 @@ def create_subject_with_owner(db: Session, payload: schemas.SubjectCreate, owner
         .first()
     )
     if not existing:
-        db.add(models.UserSubjectEnrollment(user_id=owner_user_id, subject_id=subject.id))
+        db.add(
+            models.UserSubjectEnrollment(
+                user_id=owner_user_id,
+                subject_id=subject.id,
+                role_in_subject=models.RoleEnum.teacher,
+            )
+        )
         db.commit()
 
     return subject
@@ -154,7 +394,7 @@ def list_subject_catalog_for_user(db: Session, user_id: int, include_inactive: b
     return rows
 
 
-def assign_user_to_subject(db: Session, user_id: int, subject_id: int):
+def assign_user_to_subject(db: Session, user_id: int, subject_id: int, role_in_subject: models.RoleEnum = models.RoleEnum.student):
     subject = get_subject_by_id(db, subject_id)
     if not subject:
         return None, "subject_not_found"
@@ -170,7 +410,11 @@ def assign_user_to_subject(db: Session, user_id: int, subject_id: int):
     if existing:
         return existing, "already_assigned"
 
-    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+    enrollment = models.UserSubjectEnrollment(
+        user_id=user_id,
+        subject_id=subject_id,
+        role_in_subject=role_in_subject,
+    )
     db.add(enrollment)
     db.commit()
     db.refresh(enrollment)
@@ -248,7 +492,11 @@ def enroll_student_in_subject(db: Session, user_id: int, subject_id: int, passwo
         if not pwd_context.verify(provided, subject.enrollment_password_hash):
             return None, "invalid_password"
 
-    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+    enrollment = models.UserSubjectEnrollment(
+        user_id=user_id,
+        subject_id=subject_id,
+        role_in_subject=models.RoleEnum.student,
+    )
     db.add(enrollment)
     db.commit()
     db.refresh(enrollment)
@@ -270,6 +518,20 @@ def is_user_enrolled_in_subject(db: Session, user_id: int, subject_id: int) -> b
         .filter(
             models.UserSubjectEnrollment.user_id == user_id,
             models.UserSubjectEnrollment.subject_id == subject_id,
+        )
+        .first()
+        is not None
+    )
+
+
+def is_user_teacher_in_subject(db: Session, user_id: int, subject_id: int) -> bool:
+    """Return True only if the user has role_in_subject=teacher in the given subject."""
+    return (
+        db.query(models.UserSubjectEnrollment)
+        .filter(
+            models.UserSubjectEnrollment.user_id == user_id,
+            models.UserSubjectEnrollment.subject_id == subject_id,
+            models.UserSubjectEnrollment.role_in_subject == models.RoleEnum.teacher,
         )
         .first()
         is not None

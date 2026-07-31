@@ -26,6 +26,10 @@ services:
     environment:
       DATABASE_URL: postgresql://jutge:jutge_pass@db:5432/jutge_db
       JWT_SECRET: dev-secret-key
+      # URL pública del Streamlit de alumno a la que redirigir tras LTI launch.
+      # Cambia esto a la URL de ngrok o producción antes de registrar en Atenea.
+      # Ejemplo: LTI_UI_BASE_URL: https://xxxx.ngrok.io
+      LTI_UI_BASE_URL: ${LTI_UI_BASE_URL:-}
     volumes:
       - .:/judge
     depends_on:
@@ -45,6 +49,51 @@ services:
       db:
         condition: service_healthy
     command: ["/bin/sh", "-c", "python3 src/worker.py --poll-interval 2 --batch-size 5"]
+
+  streamlit_admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: jutge_streamlit_admin
+    environment:
+      JUTGE_API_BASE_URL: http://api:8000
+    volumes:
+      - .:/judge
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0"]
+
+  streamlit_student:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: jutge_streamlit_student
+    environment:
+      JUTGE_API_BASE_URL: http://api:8000
+    volumes:
+      - .:/judge
+    ports:
+      - "8502:8502"
+    depends_on:
+      - api
+    command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false"]
+
+  streamlit_subjects:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    container_name: jutge_streamlit_subjects
+    environment:
+      JUTGE_API_BASE_URL: http://api:8000
+    volumes:
+      - .:/judge
+    ports:
+      - "8503:8503"
+    depends_on:
+      - api
+    command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0"]
 
 volumes:
   jutge_pg_data:

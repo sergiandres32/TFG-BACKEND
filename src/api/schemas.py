@@ -315,6 +315,32 @@ class SubjectPasswordUpdate(BaseModel):
     enrollment_password: Optional[str] = None
 
 
+class LtiPlatformCreate(BaseModel):
+    name: str
+    consumer_key: str
+    consumer_secret: str
+    is_active: bool = True
+
+
+class LtiPlatformOut(BaseModel):
+    id: int
+    name: str
+    consumer_key: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LtiLaunchResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    username: str
+    role: str
+    subject_id: int
+    role_in_subject: str
+
+
 class TestCaseCreate(BaseModel):
     exercise_id: int
     name: str

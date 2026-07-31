@@ -128,6 +128,97 @@ def ensure_phase2_multi_subject_schema(engine):
             # Once real subjects exist, hide LEGACY from normal selectors.
             conn.execute(text("UPDATE subjects SET is_active = false WHERE code = 'LEGACY'"))
 
+
+def ensure_phase3_lti_schema(engine):
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+
+    with engine.begin() as conn:
+        if "user_subject_enrollments" in table_names:
+            enroll_columns = {col["name"] for col in inspector.get_columns("user_subject_enrollments")}
+            if "role_in_subject" not in enroll_columns:
+                conn.execute(text("ALTER TABLE user_subject_enrollments ADD COLUMN role_in_subject VARCHAR DEFAULT 'student'"))
+                conn.execute(text("UPDATE user_subject_enrollments SET role_in_subject = 'student' WHERE role_in_subject IS NULL"))
+
+        if "lti_platforms" not in table_names:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE lti_platforms (
+                        id INTEGER PRIMARY KEY,
+                        name VARCHAR NOT NULL UNIQUE,
+                        consumer_key VARCHAR NOT NULL UNIQUE,
+                        consumer_secret VARCHAR NOT NULL,
+                        is_active BOOLEAN NOT NULL DEFAULT true,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+            )
+
+        if "lti_user_links" not in table_names:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE lti_user_links (
+                        id INTEGER PRIMARY KEY,
+                        platform_id INTEGER NOT NULL,
+                        lti_user_id VARCHAR NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(platform_id) REFERENCES lti_platforms(id) ON DELETE CASCADE,
+                        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        UNIQUE(platform_id, lti_user_id)
+                    )
+                    """
+                )
+            )
+
+        if "lti_context_subject_links" not in table_names:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE lti_context_subject_links (
+                        id INTEGER PRIMARY KEY,
+                        platform_id INTEGER NOT NULL,
+                        context_id VARCHAR NOT NULL,
+                        context_title VARCHAR,
+                        subject_id INTEGER NOT NULL,
+                        is_active BOOLEAN NOT NULL DEFAULT true,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(platform_id) REFERENCES lti_platforms(id) ON DELETE CASCADE,
+                        FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+                        UNIQUE(platform_id, context_id)
+                    )
+                    """
+                )
+            )
+
+        if "lti_launch_events" not in table_names:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE lti_launch_events (
+                        id INTEGER PRIMARY KEY,
+                        platform_id INTEGER,
+                        lti_user_id VARCHAR,
+                        context_id VARCHAR,
+                        resource_link_id VARCHAR,
+                        roles VARCHAR,
+                        user_id INTEGER,
+                        subject_id INTEGER,
+                        outcome VARCHAR NOT NULL,
+                        details JSON,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY(platform_id) REFERENCES lti_platforms(id) ON DELETE SET NULL,
+                        FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE SET NULL,
+                        FOREIGN KEY(subject_id) REFERENCES subjects(id) ON DELETE SET NULL
+                    )
+                    """
+                )
+            )
+
 def get_db():
     db = SessionLocal()
     try:
