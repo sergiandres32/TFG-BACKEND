@@ -61,9 +61,10 @@ services:
       - .:/judge
     ports:
       - "8501:8501"
+    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0"]
+    command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0 --server.baseUrlPath admin"]
 
   streamlit_student:
     build:
@@ -76,9 +77,11 @@ services:
       - .:/judge
     ports:
       - "8502:8502"
+    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false"]
+    command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false --server.baseUrlPath student"]
+
 
   streamlit_subjects:
     build:
@@ -91,9 +94,23 @@ services:
       - .:/judge
     ports:
       - "8503:8503"
+    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0"]
+    command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0 --server.baseUrlPath subjects"]
+
+  ngrok_proxy:
+    image: nginx:1.27-alpine
+    container_name: jutge_ngrok_proxy
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./nginx.ngrok.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+      - streamlit_admin
+      - streamlit_student
+      - streamlit_subjects
 
 volumes:
   jutge_pg_data:
