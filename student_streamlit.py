@@ -1,6 +1,7 @@
 import html
 import json
 import mimetypes
+import os
 import uuid
 import urllib.error
 import urllib.parse
@@ -11,6 +12,11 @@ import streamlit.components.v1 as components
 
 # Interfaz de uso para alumnado.
 st.set_page_config(page_title="Jutge Alumnat", layout="wide")
+
+
+def get_default_api_base_url() -> str:
+    default = os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000")
+    return default.rstrip("/")
 
 
 def api_post_form(base_url: str, path: str, form_data: dict, token: str | None = None):
@@ -92,7 +98,7 @@ def api_get(base_url: str, path: str, token: str):
 
 def ensure_session():
     defaults = {
-        "base_url": "http://localhost:8000",
+        "base_url": get_default_api_base_url(),
         "token": None,
         "profile": None,
         "default_username": "alumno_a_base",

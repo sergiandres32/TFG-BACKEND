@@ -1,5 +1,6 @@
 import html
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +12,11 @@ import streamlit as st
 # cada interacción vuelve a ejecutar el script completo y usa session_state
 # para mantener autenticación, configuración y mensajes efímeros.
 st.set_page_config(page_title="Jutge Admin", layout="wide")
+
+
+def get_default_api_base_url() -> str:
+    default = os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000")
+    return default.rstrip("/")
 
 
 def api_post_form(base_url: str, path: str, form_data: dict, token: str | None = None):
@@ -126,7 +132,7 @@ def parse_json_items(raw_json: str):
 def ensure_session():
     # Inicializa valores por defecto de sesión para configuración y autenticación.
     defaults = {
-        "base_url": "http://localhost:8000",
+        "base_url": get_default_api_base_url(),
         "token": None,
         "profile": None,
         "default_username": "profesor_seed",

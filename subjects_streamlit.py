@@ -1,4 +1,5 @@
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -7,6 +8,11 @@ import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Jutge Assignatures", layout="wide")
+
+
+def get_default_api_base_url() -> str:
+    default = os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000")
+    return default.rstrip("/")
 
 
 def api_post_form(base_url: str, path: str, form_data: dict, token: str | None = None):
@@ -98,7 +104,7 @@ def api_delete(base_url: str, path: str, token: str):
 
 def ensure_session():
     defaults = {
-        "base_url": "http://localhost:8000",
+        "base_url": get_default_api_base_url(),
         "token": None,
         "profile": None,
         "default_username": "alumno_a_base",
