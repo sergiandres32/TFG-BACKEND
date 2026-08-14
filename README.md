@@ -5,7 +5,7 @@ An automated grading system for C programming exercises with strict evaluation, 
 ## Quick Start
 
 ```bash
-# 1) Levanta API + PostgreSQL + Worker + Streamlit admin + student en background
+# 1) Levanta API + PostgreSQL + Worker + Streamlit + nginx proxy en background
 make stack-up
 
 # 2) En otra terminal: reinicia DB y carga datos seed (profesor, alumnos, topics, ejercicios, test cases)
@@ -14,21 +14,29 @@ make db-reset-seed
 # 3) API docs (Swagger)
 http://localhost:8000/docs
 
-# 4) Panel admin Streamlit (profesor)
-http://localhost:8501
+# 4) Front publico a traves de nginx (ruta real de acceso)
+http://localhost:8080/admin/
+http://localhost:8080/student/
+http://localhost:8080/subjects/
 
-# 5) Panel student Streamlit (alumno)
-http://localhost:8502
-
-# 6) Suite E2E API completa (Newman en Docker)
+# 5) Suite E2E API completa (Newman en Docker)
 make newman-docker-all
 ```
 
 Resumen rapido de comandos:
 
-- make stack-up: arranca el stack Docker y deja Streamlit (admin y student) corriendo en segundo plano.
+- make stack-up: arranca el stack Docker con API, worker, DB, Streamlit y proxy nginx en puerto 8080.
 - make db-reset-seed: limpia y vuelve a sembrar la base de datos para empezar desde estado conocido.
 - make newman-docker-all: ejecuta contratos + errores + flujo E2E multi-actor usando colecciones Postman.
+
+### Rutas reales de acceso
+
+- API: `http://localhost:8000/docs`
+- Admin: `http://localhost:8080/admin/`
+- Student: `http://localhost:8080/student/`
+- Subjects: `http://localhost:8080/subjects/`
+
+> No es recomendable abrir directamente `http://localhost:8501`, `http://localhost:8502` o `http://localhost:8503` salvo debugging local; la ruta publica real pasa por nginx.
 
 ## Project Structure
 
@@ -85,6 +93,17 @@ For detailed guides, see the `docs/` folder:
 - [Database Monitoring with DBeaver](docs/DBEAVER_SETUP.md)
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
 - [Development Notes](docs/DEVELOPMENT.md)
+
+## Public routing / nginx proxy
+
+La capa publica del sistema usa nginx en el puerto `8080` para enrutar cada frontend y la API:
+
+- `/admin/` -> `streamlit_admin` (`8501`)
+- `/student/` -> `streamlit_student` (`8502`)
+- `/subjects/` -> `streamlit_subjects` (`8503`)
+- `/` -> API FastAPI (`8000`)
+
+Esto es lo que usa la integracion LTI/Atenea con una URL publica unica y estable.
 
 ## Teacher Admin Panel (Streamlit)
 
