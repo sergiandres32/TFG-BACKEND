@@ -22,7 +22,7 @@ services:
     build: .
     container_name: jutge_api
     ports:
-      - "8000:8000"
+      - "18000:8000"
     environment:
       DATABASE_URL: postgresql://jutge:jutge_pass@db:5432/jutge_db
       JWT_SECRET: dev-secret-key
@@ -37,8 +37,8 @@ services:
       # - LTI_UI_BASE_URL_STUDENT: https://xxxx.ngrok-free.dev/student
       # Fallback legacy si no hay URLs por rol:
       LTI_UI_BASE_URL: ${LTI_UI_BASE_URL:-}
-      LTI_UI_BASE_URL_TEACHER: ${LTI_UI_BASE_URL_TEACHER:-}
-      LTI_UI_BASE_URL_STUDENT: ${LTI_UI_BASE_URL_STUDENT:-}
+      LTI_UI_BASE_URL_TEACHER: ${LTI_UI_BASE_URL_TEACHER:-http://craaxcloud.epsevg.upc.edu:18501}
+      LTI_UI_BASE_URL_STUDENT: ${LTI_UI_BASE_URL_STUDENT:-http://craaxcloud.epsevg.upc.edu:18502}
     volumes:
       - .:/judge
     depends_on:
@@ -69,7 +69,7 @@ services:
     volumes:
       - .:/judge
     ports:
-      - "8501:8501"
+      - "18501:8501"
     depends_on:
       - api
     command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0"]
@@ -84,7 +84,7 @@ services:
     volumes:
       - .:/judge
     ports:
-      - "8502:8502"
+      - "18502:8502"
     depends_on:
       - api
     command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false"]
@@ -99,7 +99,7 @@ services:
     volumes:
       - .:/judge
     ports:
-      - "8503:8503"
+      - "18503:8503"
     depends_on:
       - api
     command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0"]
