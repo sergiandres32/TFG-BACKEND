@@ -1,5 +1,20 @@
 # 🚀 Integración Judge + API: Guía completa
 
+## Novedad 2026-09-05: Tipo de entrega por ejercicio
+
+Cada ejercicio publica `expected_submission_type` en `GET /exercises` y `GET /exercises/{id}`:
+
+- `c_file`: el alumno solo puede enviar `.c`
+- `zip_makefile`: el alumno solo puede enviar `.zip`
+
+`POST /submissions` valida este campo y devuelve `400` si el formato enviado no coincide.
+
+## Novedad 2026-09-05: Endpoint de retroaccio por tema
+
+El endpoint principal para feedback de tema en alumnado pasa a ser:
+
+- `GET /me/topic-retroaccions`
+
 ## Novedad 2026-07-03: Integracion por asignatura
 
 Antes de listar temas/ejercicios, el cliente debe consultar las asignaturas del usuario:
@@ -19,7 +34,7 @@ Si se consulta una asignatura no inscrita, la API retorna `403`.
 
 ```mermaid
 flowchart TD
-  A[Login student] --> B[GET /subjects/catalog]
+  A[Launch LTI desde Atenea] --> B[GET /subjects/catalog]
   B --> C{Asignatura requiere password?}
   C -- No --> D[POST /subjects/{id}/enroll]
   C -- Si --> E[Alumno introduce password]
@@ -32,6 +47,46 @@ flowchart TD
 Respuestas utiles de `POST /subjects/{id}/enroll`:
 - Inscripcion nueva: `{"ok": true, "message": "Inscripcio completada"}`
 - Ya inscrito: `{"ok": true, "message": "Already enrolled"}`
+
+## Novedad 2026-07-24: Launch LTI 1.1 (Atenea)
+
+Jutge incorpora endpoint de launch LTI para integracion con Moodle/Atenea.
+
+Flujo resumido:
+
+1. Profesor configura plataforma LTI (`POST /lti/platforms`) con `consumer_key` y `consumer_secret`.
+2. Atenea envia POST firmado a `POST /lti/launch`.
+3. Jutge valida OAuth 1.0 (`HMAC-SHA1`).
+4. Jutge mapea `user_id` LMS a usuario interno (auto-crea si no existe).
+5. Jutge mapea `context_id` a asignatura interna:
+  - Instructor: puede auto-crear asignatura/contexto si no existe mapeo.
+  - Student: requiere mapeo ya existente.
+6. Jutge devuelve JWT interno para consumir API normal.
+
+Claims LTI usados actualmente:
+- `oauth_consumer_key`
+- `user_id`
+- `roles`
+- `context_id`
+- `context_title`
+- `resource_link_id`
+- `lis_person_contact_email_primary` (opcional)
+- `lis_person_name_full` / `ext_user_username`
+
+### Parametro personalizado `target` en launch
+
+En Atenea se configura como parametro personalizado con nombre `target`. El LMS lo transporta internamente como parametro LTI personalizado.
+
+Targets soportados actualmente:
+- `subjects`: abre el portal de asignaturas (`/subjects`) para profesor o alumno.
+- `admin`: abre el panel admin (`/admin`) para profesor. Es equivalente a `exercises` a nivel de panel.
+- `exercises`: abre el panel admin (`/admin`) para profesor. Se mantiene como alias historico de panel.
+- `exercise:123` o `custom_exercise_id=123`: en profesorado abre `Entregues` con el filtro del ejercicio `123`; en alumnado abre `Ejercicis` con ese ejercicio ya preseleccionado.
+
+Notas:
+- Si no se envia `target`, se aplica el enrutado por rol habitual: profesor -> admin, alumno -> student.
+- En alumnado, `admin` y `exercises` no se aplican y se mantiene flujo de alumno.
+- Para ejercicios concretos, `exercise_id` es lo que realmente diferencia el destino.
 
 ## 📊 Códigos de Error Explicados
 
@@ -106,41 +161,23 @@ Respuestas utiles de `POST /subjects/{id}/enroll`:
 
 ## 📝 Ejemplos de Uso
 
-### 1️⃣ Registrar usuario
+### 1️⃣ Obtener token via Atenea LTI
 
 ```bash
-curl -X POST http://localhost:8000/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "alice",
-    "email": "alice@example.com",
-    "password": "pass123"
-  }'
-```
-
-Respuesta:
-```json
-{
-  "id": 1,
-  "username": "alice",
-  "email": "alice@example.com",
-  "role": "student"
-}
-```
-
-### 2️⃣ Login
-
-```bash
-curl -X POST http://localhost:8000/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=alice&password=pass123"
+# El LMS (Atenea) hace POST firmado a /lti/launch.
+# La API responde con access_token y contexto de asignatura.
 ```
 
 Respuesta:
 ```json
 {
   "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
-  "token_type": "bearer"
+  "token_type": "bearer",
+  "user_id": 12,
+  "username": "atenea_student_2001",
+  "role": "student",
+  "subject_id": 5,
+  "role_in_subject": "student"
 }
 ```
 
@@ -305,12 +342,8 @@ Respuesta:
 # Levantar Postgres + API
 docker-compose -f docker-compose-api.yml up
 
-# En otra terminal, testear
-TOKEN=$(curl -s -X POST http://localhost:8000/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=alice&password=pass123" | jq -r '.access_token')
-
-echo "Token: $TOKEN"
+# En otra terminal, usar el token obtenido desde /lti/launch
+TOKEN="<token_emitido_por_lti_launch>"
 
 # Ahora usar $TOKEN en requests
 curl -H "Authorization: bearer $TOKEN" http://localhost:8000/leaderboard

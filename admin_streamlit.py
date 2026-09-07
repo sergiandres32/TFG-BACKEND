@@ -1,6 +1,10 @@
 import html
 import json
 import os
+import re
+import base64
+import io
+import zipfile
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,31 +16,19 @@ import streamlit as st
 # cada interacción vuelve a ejecutar el script completo y usa session_state
 # para mantener autenticación, configuración y mensajes efímeros.
 st.set_page_config(page_title="Jutge Admin", layout="wide")
-
-
-def get_default_api_base_url() -> str:
-    default = os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000")
-    return default.rstrip("/")
-
-
-def api_post_form(base_url: str, path: str, form_data: dict, token: str | None = None):
-    # Envía una petición POST con formulario (x-www-form-urlencoded) y devuelve estado + JSON.
-    body = urllib.parse.urlencode(form_data).encode()
-    req = urllib.request.Request(f"{base_url}{path}", data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            return response.status, json.loads(response.read().decode())
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read().decode())
-        except Exception:
-            payload = {"detail": str(exc)}
-        return exc.code, payload
-    except Exception as exc:
-        return 0, {"detail": str(exc)}
+st.markdown(
+    """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def api_post_json(base_url: str, path: str, payload: dict, token: str):
@@ -111,6 +103,65 @@ def api_get(base_url: str, path: str, token: str):
         return 0, {"detail": str(exc)}
 
 
+def api_get_bytes(base_url: str, path: str, token: str):
+    # Realiza una petición GET autenticada y devuelve estado + bytes + headers.
+    req = urllib.request.Request(f"{base_url}{path}", method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            return response.status, response.read(), dict(response.headers.items()), None
+    except urllib.error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode())
+        except Exception:
+            payload = {"detail": str(exc)}
+        return exc.code, None, dict(exc.headers.items()) if exc.headers else {}, payload
+    except Exception as exc:
+        return 0, None, {}, {"detail": str(exc)}
+
+
+def _filename_from_content_disposition(content_disposition: str, fallback: str = "entrega.bin") -> str:
+    match = re.search(r'filename="?([^";]+)"?', content_disposition or "")
+    if match:
+        return match.group(1).strip()
+    return fallback
+
+
+def _sanitize_pack_name_fragment(raw: str, fallback: str) -> str:
+    candidate = str(raw or "").strip().lower()
+    # Normalize each filter fragment as kebab-case: words separated by '-'.
+    cleaned = re.sub(r"[^a-z0-9]+", "-", candidate).strip("-")
+    if cleaned:
+        return cleaned
+    fallback_cleaned = re.sub(r"[^a-z0-9]+", "-", str(fallback or "").strip().lower()).strip("-")
+    return fallback_cleaned or "sense-valor"
+
+
+LEVEL_TO_CA = {
+    "beginner": "bàsic",
+    "mid": "intermedi",
+    "expert": "difícil",
+}
+CA_TO_LEVEL = {
+    "bàsic": "beginner",
+    "basic": "beginner",
+    "intermedi": "mid",
+    "difícil": "expert",
+    "dificil": "expert",
+}
+
+
+def level_to_ca(level_value: str) -> str:
+    return LEVEL_TO_CA.get(str(level_value or "").strip().lower(), str(level_value or ""))
+
+
+def normalize_level_value(level_value: str) -> str:
+    normalized = str(level_value or "").strip().lower()
+    if normalized in LEVEL_TO_CA:
+        return normalized
+    return CA_TO_LEVEL.get(normalized, normalized)
+
+
 def parse_json_items(raw_json: str):
     # Acepta un objeto JSON o un array de objetos JSON y normaliza a lista.
     try:
@@ -132,14 +183,25 @@ def parse_json_items(raw_json: str):
 def ensure_session():
     # Inicializa valores por defecto de sesión para configuración y autenticación.
     defaults = {
-        "base_url": get_default_api_base_url(),
+        "base_url": os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000"),
         "token": None,
         "profile": None,
-        "default_username": "profesor_seed",
-        "default_password": "profesor123",
+        "_lti_params_processed": False,
+        "_lti_target_processed": False,
+        "_lti_exercise_id_processed": False,
         "flash_message": None,
         "flash_target": None,
         "selected_subject_id": None,
+        "admin_section": "Inici",
+        "teacher_download_bytes": None,
+        "teacher_download_filename": None,
+        "teacher_download_mime": "application/octet-stream",
+        "teacher_download_job_id": None,
+        "teacher_auto_download_last_job_id": None,
+        "teacher_bulk_download_bytes": None,
+        "teacher_bulk_download_filename": None,
+        "teacher_bulk_download_signature": None,
+        "teacher_bulk_auto_download_signature": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -188,58 +250,22 @@ def logout():
     # Cierra la sesión local eliminando token y perfil.
     st.session_state.token = None
     st.session_state.profile = None
+    st.session_state._lti_params_processed = False
+    st.session_state._lti_target_processed = False
+    st.session_state._lti_exercise_id_processed = False
 
 
-def render_login():
-    # Renderiza la pantalla de login y valida que el usuario tenga rol de profesor.
+def render_lti_required_message():
+    # Acceso solo via launch LTI con rol docente.
     st.title("Jutge Admin")
-    st.caption("Pantalla 1/2: Inici de sessió")
-
-    with st.form("login_form", clear_on_submit=False):
-        username = st.text_input("Usuari", value=st.session_state.default_username)
-        password = st.text_input("Contrasenya", value=st.session_state.default_password, type="password")
-        submitted = st.form_submit_button("Inicia sessió")
-
-    if not submitted:
-        return
-
-    if not username or not password:
-        st.warning("Introdueix usuari i contrasenya.")
-        return
-
-    status, token_data = api_post_form(
-        st.session_state.base_url,
-        "/token",
-        {"username": username, "password": password},
-    )
-    if status != 200:
-        st.error(token_data.get("detail", "No s'ha pogut iniciar sessió"))
-        return
-
-    token = token_data.get("access_token")
-    if not token:
-        st.error("L'API no ha retornat access_token")
-        return
-
-    status, me = api_get(st.session_state.base_url, "/me", token)
-    if status != 200:
-        st.error(me.get("detail", "No s'ha pogut validar l'usuari"))
-        return
-
-    if me.get("role") != "teacher":
-        st.error("Aquest panell només està disponible per a comptes de professor/admin.")
-        return
-
-    st.session_state.token = token
-    st.session_state.profile = me
-    st.success("Sessió iniciada")
-    st.rerun()
+    st.caption("Acces exclusiu via Atenea (LTI)")
+    st.warning("El login local està deshabilitat.")
+    st.info("Accedeix a aquest panell des del launch LTI d'Atenea amb rol de professor.")
 
 
 def render_dashboard():
     # Muestra métricas básicas del sistema y permite crear temas y ejercicios.
     st.title("Tauler d'administració")
-    st.caption("Pantalla 2/2: Tauler")
 
     token = st.session_state.token
     base_url = st.session_state.base_url
@@ -269,14 +295,6 @@ def render_dashboard():
 
     show_queued_flash("top")
 
-    col_a, col_b = st.columns([4, 1])
-    with col_a:
-        st.write(f"Connectat com a **{st.session_state.profile.get('username')}**")
-    with col_b:
-        if st.button("Tanca sessió", type="secondary"):
-            logout()
-            st.rerun()
-
     # Carga inicial de datos para renderizar todo el tablero en una sola pasada.
     # Si alguna llamada falla, degradamos a lista vacía y mostramos mensajes en cada bloque.
     ex_status, exercises = api_get(base_url, f"/exercises{subject_query}", token)
@@ -299,52 +317,68 @@ def render_dashboard():
     # c3.metric("Entrades leaderboard", len(leaderboard))
     # c4.metric("Completats globals", total_completed)
 
+    selected_section = st.session_state.get("admin_section", "Inici")
+    show_overview = selected_section == "Inici"
+    show_topics = selected_section == "Temari"
+    show_quiz = selected_section == "Preguntes"
+    show_exercises = selected_section == "Exercicis"
+    show_test_cases = selected_section == "Proves"
+    show_tracking = selected_section == "Alumnat"
+
+    if show_overview:
+        st.info("Selecciona un apartat a la barra lateral per treballar de forma enfocada.")
+
     topics_section_slot = st.container()
     create_topic_section_slot = st.container()
 
-    with topics_section_slot:
-        st.subheader("Temes")
-        if topics:
-        # Copiamos snapshot original para poder detectar cambios por fila
-        # tras editar en data_editor.
-            topic_rows = [
-            {
-                "id": topic.get("id"),
-                "name": topic.get("name") or "",
-                "description": topic.get("description") or "",
-                "weight": float(topic.get("weight", 1.0)),
-                "required_beginner": int(topic.get("required_beginner", 0)),
-                "required_mid": int(topic.get("required_mid", 0)),
-                "required_expert": int(topic.get("required_expert", 0)),
-                "eliminar": False,
-            }
-            for topic in topics
-            ]
-            topic_df = pd.DataFrame(topic_rows)
-            original_by_id = {topic.get("id"): topic for topic in topics}
-            with st.form("topics_editor_form"):
-                edited_topic_df = st.data_editor(
-                    topic_df,
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=["id"],
-                    column_config={
-                        "id": "ID",
-                        "name": "Nom",
-                        "description": "Descripció",
-                        "weight": st.column_config.NumberColumn("Pes", min_value=0.0, step=0.1),
-                        "required_beginner": st.column_config.NumberColumn("Req. bàsic", min_value=0, step=1),
-                        "required_mid": st.column_config.NumberColumn("Req. intermedi", min_value=0, step=1),
-                        "required_expert": st.column_config.NumberColumn("Req. difícil", min_value=0, step=1),
-                        "eliminar": "Eliminar",
-                    },
-                    key="topics_data_editor",
-                )
+    if show_topics:
+        with topics_section_slot:
+            st.subheader("Temes")
+            submit_topic_update = False
+            submit_topic_delete = False
+            if topics:
+                # Copiamos snapshot original para poder detectar cambios por fila
+                # tras editar en data_editor.
+                topic_rows = [
+                    {
+                        "id": topic.get("id"),
+                        "name": topic.get("name") or "",
+                        "description": topic.get("description") or "",
+                        "weight": float(topic.get("weight", 1.0)),
+                        "required_beginner": int(topic.get("required_beginner", 0)),
+                        "required_mid": int(topic.get("required_mid", 0)),
+                        "required_expert": int(topic.get("required_expert", 0)),
+                        "secret_message": topic.get("secret_message") or "",
+                        "eliminar": False,
+                    }
+                    for topic in topics
+                ]
+                topic_df = pd.DataFrame(topic_rows)
+                original_by_id = {topic.get("id"): topic for topic in topics}
+                with st.form("topics_editor_form"):
+                    edited_topic_df = st.data_editor(
+                        topic_df,
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=["id"],
+                        column_config={
+                            "id": "ID",
+                            "name": "Nom",
+                            "description": "Descripció",
+                            "weight": st.column_config.NumberColumn("Pes", min_value=0.0, step=0.1),
+                            "required_beginner": st.column_config.NumberColumn("Req. bàsic", min_value=0, step=1),
+                            "required_mid": st.column_config.NumberColumn("Req. intermedi", min_value=0, step=1),
+                            "required_expert": st.column_config.NumberColumn("Req. difícil", min_value=0, step=1),
+                            "secret_message": "Retroaccio",
+                            "eliminar": "Eliminar",
+                        },
+                        key="topics_data_editor",
+                    )
 
-                st.caption("Si estàs editant una cel·la, prem Enter o fes clic fora abans de confirmar els canvis.")
-                update_col, delete_col = st.columns(2)
-                submit_topic_update = update_col.form_submit_button("Guardar")
-                submit_topic_delete = delete_col.form_submit_button("Eliminar seleccionats")
+                    st.caption("Si estàs editant una cel·la, prem Enter o fes clic fora abans de confirmar els canvis.")
+                    update_col, delete_col = st.columns(2)
+                    submit_topic_update = update_col.form_submit_button("Guardar")
+                    submit_topic_delete = delete_col.form_submit_button("Eliminar seleccionats")
 
             if submit_topic_update:
                 updated_count = 0
@@ -358,6 +392,7 @@ def render_dashboard():
                     new_required_beginner = int(row["required_beginner"])
                     new_required_mid = int(row["required_mid"])
                     new_required_expert = int(row["required_expert"])
+                    new_secret_message = str(row["secret_message"]).strip()
 
                     old_name = str(original.get("name") or "").strip()
                     old_description = str(original.get("description") or "").strip()
@@ -365,6 +400,7 @@ def render_dashboard():
                     old_required_beginner = int(original.get("required_beginner", 0))
                     old_required_mid = int(original.get("required_mid", 0))
                     old_required_expert = int(original.get("required_expert", 0))
+                    old_secret_message = str(original.get("secret_message") or "").strip()
 
                     if not new_name:
                         st.error(f"El tema amb id {topic_id} no pot tenir el nom buit.")
@@ -377,6 +413,7 @@ def render_dashboard():
                         or new_required_beginner != old_required_beginner
                         or new_required_mid != old_required_mid
                         or new_required_expert != old_required_expert
+                        or new_secret_message != old_secret_message
                     )
 
                     if has_changes:
@@ -388,6 +425,8 @@ def render_dashboard():
                             "required_beginner": new_required_beginner,
                             "required_mid": new_required_mid,
                             "required_expert": new_required_expert,
+                            "secret_code": None,
+                            "secret_message": new_secret_message or None,
                         }
                         status, result = api_put_json(base_url, f"/topics/{topic_id}", payload, token)
                         if status == 200:
@@ -418,117 +457,126 @@ def render_dashboard():
                     if deleted_count > 0:
                         queue_flash(f"S'han eliminat {deleted_count} tema(es).", target="topics_editor")
                         st.rerun()
-        else:
-            st.info("Encara no hi ha temes creats.")
+            if not topics:
+                st.info("Encara no hi ha temes creats.")
 
-        show_queued_flash("topics_editor")
+            show_queued_flash("topics_editor")
 
-    with create_topic_section_slot:
-        st.subheader("Crear tema")
-        if "create_topic_mode_json" not in st.session_state:
-            st.session_state.create_topic_mode_json = False
-
-        if not st.session_state.create_topic_mode_json:
-            if st.button("Importar des de JSON", key="toggle_topic_to_json_btn"):
-                st.session_state.create_topic_mode_json = True
-                st.rerun()
-
-            with st.form("create_topic_form", clear_on_submit=True):
-                topic_name = st.text_input("Nom")
-                topic_description = st.text_area("Descripció", height=80)
-                topic_weight = st.number_input("Pes", min_value=0.1, value=1.0, step=0.1)
-                req_col1, req_col2, req_col3 = st.columns(3)
-                topic_required_beginner = req_col1.number_input("Req. bàsic", min_value=0, value=0, step=1)
-                topic_required_mid = req_col2.number_input("Req. intermedi", min_value=0, value=0, step=1)
-                topic_required_expert = req_col3.number_input("Req. difícil", min_value=0, value=0, step=1)
-                create_topic = st.form_submit_button("Crear tema")
-
-            if create_topic:
-                if not topic_name.strip():
-                    st.warning("El nom del tema és obligatori.")
-                else:
-                    status, created_topic = api_post_json(
-                        base_url,
-                        "/topics",
-                        {
-                            "subject_id": selected_subject_id,
-                            "name": topic_name.strip(),
-                            "description": topic_description.strip() or None,
-                            "weight": float(topic_weight),
-                            "required_beginner": int(topic_required_beginner),
-                            "required_mid": int(topic_required_mid),
-                            "required_expert": int(topic_required_expert),
-                        },
-                        token,
-                    )
-                    if status == 200:
-                        queue_flash(f"Tema creat: {created_topic.get('name')}", target="create_topic")
-                        st.rerun()
-                    else:
-                        st.error(created_topic.get("detail", "No s'ha pogut crear el tema"))
-        else:
-            st.caption("Mode JSON actiu")
-            if st.button("Tornar a creació manual", key="toggle_topic_to_manual_btn"):
+    if show_topics:
+        with create_topic_section_slot:
+            st.subheader("Crear tema")
+            if "create_topic_mode_json" not in st.session_state:
                 st.session_state.create_topic_mode_json = False
-                st.rerun()
 
-            with st.form("import_topics_json_form"):
-                st.caption("Accepta un objecte o llista d'objectes amb claus: name, description, weight, required_beginner, required_mid, required_expert.")
-                topics_json_input = st.text_area(
-                    "JSON de temes",
-                    height=180,
-                    key="topics_json_import_input",
-                    placeholder='[{"name":"Signals","description":"...","weight":1.0,"required_beginner":0,"required_mid":0,"required_expert":0}]',
-                )
-                import_topics = st.form_submit_button("Importar temes")
+            if not st.session_state.create_topic_mode_json:
+                if st.button("Importar des de JSON", key="toggle_topic_to_json_btn"):
+                    st.session_state.create_topic_mode_json = True
+                    st.rerun()
 
-            if import_topics:
-                items, parse_error = parse_json_items(topics_json_input.strip())
-                if parse_error:
-                    st.error(parse_error)
-                else:
-                    created_count = 0
-                    failed_count = 0
-                    for idx, item in enumerate(items, start=1):
-                        name = str(item.get("name") or "").strip()
-                        if not name:
-                            failed_count += 1
-                            st.error(f"Tema #{idx}: falta 'name'.")
-                            continue
-                        try:
-                            payload = {
+                with st.form("create_topic_form", clear_on_submit=True):
+                    topic_name = st.text_input("Nom")
+                    topic_description = st.text_area("Descripció", height=80)
+                    topic_weight = st.number_input("Pes", min_value=0.1, value=1.0, step=0.1)
+                    req_col1, req_col2, req_col3 = st.columns(3)
+                    topic_required_beginner = req_col1.number_input("Req. bàsic", min_value=0, value=0, step=1)
+                    topic_required_mid = req_col2.number_input("Req. intermedi", min_value=0, value=0, step=1)
+                    topic_required_expert = req_col3.number_input("Req. difícil", min_value=0, value=0, step=1)
+                    topic_secret_message = st.text_area("Retroaccio (opcional)", height=80)
+                    create_topic = st.form_submit_button("Crear tema")
+
+                if create_topic:
+                    if not topic_name.strip():
+                        st.warning("El nom del tema és obligatori.")
+                    else:
+                        status, created_topic = api_post_json(
+                            base_url,
+                            "/topics",
+                            {
                                 "subject_id": selected_subject_id,
-                                "name": name,
-                                "description": (str(item.get("description") or "").strip() or None),
-                                "weight": float(item.get("weight", 1.0)),
-                                "required_beginner": int(item.get("required_beginner", 0)),
-                                "required_mid": int(item.get("required_mid", 0)),
-                                "required_expert": int(item.get("required_expert", 0)),
-                            }
-                        except (TypeError, ValueError):
-                            failed_count += 1
-                            st.error(f"Tema #{idx}: format numèric invàlid.")
-                            continue
-
-                        status, result = api_post_json(base_url, "/topics", payload, token)
+                                "name": topic_name.strip(),
+                                "description": topic_description.strip() or None,
+                                "weight": float(topic_weight),
+                                "required_beginner": int(topic_required_beginner),
+                                "required_mid": int(topic_required_mid),
+                                "required_expert": int(topic_required_expert),
+                                "secret_code": None,
+                                "secret_message": topic_secret_message.strip() or None,
+                            },
+                            token,
+                        )
                         if status == 200:
-                            created_count += 1
+                            queue_flash(f"Tema creat: {created_topic.get('name')}", target="create_topic")
+                            st.rerun()
                         else:
-                            failed_count += 1
-                            st.error(f"Tema #{idx}: {result.get('detail', 'No s\'ha pogut crear el tema')}")
+                            st.error(created_topic.get("detail", "No s'ha pogut crear el tema"))
+            else:
+                st.caption("Mode JSON actiu")
+                if st.button("Tornar a creació manual", key="toggle_topic_to_manual_btn"):
+                    st.session_state.create_topic_mode_json = False
+                    st.rerun()
 
-                    if created_count:
-                        st.success(f"Importació completada: {created_count} tema(es) creat(s).")
-                    if failed_count:
-                        st.warning(f"Importació amb incidències: {failed_count} element(s) no creat(s).")
-                    if created_count > 0:
-                        queue_flash(f"Importació de temes: {created_count} creat(s).", target="create_topic")
-                        st.rerun()
+                with st.form("import_topics_json_form"):
+                    st.caption("Accepta un objecte o llista d'objectes amb claus: name, description, weight, required_beginner, required_mid, required_expert, retroaccio (opcional).")
+                    topics_json_input = st.text_area(
+                        "JSON de temes",
+                        height=180,
+                        key="topics_json_import_input",
+                        placeholder='[{"name":"Signals","description":"Gestio de senyals","weight":1.0,"required_beginner":1,"required_mid":0,"required_expert":0,"retroaccio":"Bon progrés en aquest tema."}]',
+                    )
+                    import_topics = st.form_submit_button("Importar temes")
 
-        show_queued_flash("create_topic")
+                if import_topics:
+                    items, parse_error = parse_json_items(topics_json_input.strip())
+                    if parse_error:
+                        st.error(parse_error)
+                    else:
+                        created_count = 0
+                        failed_count = 0
+                        for idx, item in enumerate(items, start=1):
+                            name = str(item.get("name") or "").strip()
+                            if not name:
+                                failed_count += 1
+                                st.error(f"Tema #{idx}: falta 'name'.")
+                                continue
+                            try:
+                                payload = {
+                                    "subject_id": selected_subject_id,
+                                    "name": name,
+                                    "description": (str(item.get("description") or "").strip() or None),
+                                    "weight": float(item.get("weight", 1.0)),
+                                    "required_beginner": int(item.get("required_beginner", 0)),
+                                    "required_mid": int(item.get("required_mid", 0)),
+                                    "required_expert": int(item.get("required_expert", 0)),
+                                    "secret_code": None,
+                                    "secret_message": (
+                                        str(item.get("retroaccio") or item.get("secret_message") or "").strip() or None
+                                    ),
+                                }
+                            except (TypeError, ValueError):
+                                failed_count += 1
+                                st.error(f"Tema #{idx}: format numèric invàlid.")
+                                continue
 
-    st.subheader("Preguntes tipus test")
-    if topics:
+                            status, result = api_post_json(base_url, "/topics", payload, token)
+                            if status == 200:
+                                created_count += 1
+                            else:
+                                failed_count += 1
+                                st.error(f"Tema #{idx}: {result.get('detail', 'No s\'ha pogut crear el tema')}")
+
+                        if created_count:
+                            st.success(f"Importació completada: {created_count} tema(es) creat(s).")
+                        if failed_count:
+                            st.warning(f"Importació amb incidències: {failed_count} element(s) no creat(s).")
+                        if created_count > 0:
+                            queue_flash(f"Importació de temes: {created_count} creat(s).", target="create_topic")
+                            st.rerun()
+
+            show_queued_flash("create_topic")
+
+    if show_quiz:
+        st.subheader("Preguntes tipus test")
+    if show_quiz and topics:
         topic_selector_options = {
             f"{topic.get('name') or 'Tema'} (id={topic.get('id')})": topic.get("id")
             for topic in topics
@@ -553,7 +601,7 @@ def render_dashboard():
                 quiz_rows = [
                     {
                         "id": question.get("id"),
-                        "nivell": question.get("level") or "",
+                        "nivell": level_to_ca(question.get("level") or ""),
                         "enunciat": question.get("statement") or "",
                         "opcions": len(question.get("options") or []),
                         "correcta": int(question.get("correct_option_index", 0)) + 1,
@@ -625,7 +673,12 @@ def render_dashboard():
 
                 with st.form("create_quiz_question_form", clear_on_submit=True):
                     quiz_statement = st.text_area("Enunciat", height=100)
-                    quiz_level = st.selectbox("Nivell pregunta", options=["beginner", "mid", "expert"], index=0)
+                    quiz_level = st.selectbox(
+                        "Nivell pregunta",
+                        options=["beginner", "mid", "expert"],
+                        index=0,
+                        format_func=level_to_ca,
+                    )
                     quiz_required = st.checkbox("Pregunta obligatòria", value=False)
 
                     option_values = []
@@ -673,12 +726,12 @@ def render_dashboard():
                     st.rerun()
 
                 with st.form("import_quiz_questions_json_form"):
-                    st.caption("Accepta objecte o llista amb claus: topic_id (opcional), level, statement, options, correct_option_index, is_required.")
+                    st.caption("Accepta objecte o llista amb claus: topic_id (opcional), level (beginner|mid|expert o bàsic/basic|intermedi|difícil/dificil), statement, options, correct_option_index, is_required.")
                     quiz_json_input = st.text_area(
                         "JSON de preguntes",
                         height=220,
                         key="quiz_json_import_input",
-                        placeholder='[{"level":"beginner","statement":"...","options":["A","B"],"correct_option_index":0,"is_required":false}]',
+                        placeholder='[{"level":"intermedi","statement":"Quin senyal finalitza un procés?","options":["SIGKILL","SIGTERM","SIGSTOP"],"correct_option_index":1,"is_required":true}]',
                     )
                     import_quiz = st.form_submit_button("Importar preguntes")
 
@@ -694,9 +747,10 @@ def render_dashboard():
                                 options = item.get("options", [])
                                 cleaned_options = [str(option).strip() for option in options]
                                 topic_id_value = int(item.get("topic_id", selected_quiz_topic_id))
+                                normalized_level = normalize_level_value(str(item.get("level", "beginner") or "beginner"))
                                 payload = {
                                     "topic_id": topic_id_value,
-                                    "level": str(item.get("level", "beginner")).strip() or "beginner",
+                                    "level": normalized_level,
                                     "statement": str(item.get("statement") or "").strip(),
                                     "options": cleaned_options,
                                     "correct_option_index": int(item.get("correct_option_index", 0)),
@@ -714,6 +768,10 @@ def render_dashboard():
                             if len(payload["options"]) < 2 or any(not option for option in payload["options"]):
                                 failed_count += 1
                                 st.error(f"Pregunta #{idx}: 'options' ha de tenir almenys 2 textos no buits.")
+                                continue
+                            if payload["level"] not in {"beginner", "mid", "expert"}:
+                                failed_count += 1
+                                st.error(f"Pregunta #{idx}: 'level' invàlid.")
                                 continue
                             if payload["correct_option_index"] < 0 or payload["correct_option_index"] >= len(payload["options"]):
                                 failed_count += 1
@@ -734,10 +792,11 @@ def render_dashboard():
                         if created_count > 0:
                             queue_flash(f"Importació de preguntes: {created_count} creada(es).", target="quiz_questions")
                             st.rerun()
-    else:
+    elif show_quiz:
         st.info("Cal crear com a mínim un tema per gestionar preguntes tipus test.")
 
-    show_queued_flash("quiz_questions")
+    if show_quiz:
+        show_queued_flash("quiz_questions")
 
     topic_options = {"Sense tema": None}
     for topic in topics:
@@ -748,8 +807,9 @@ def render_dashboard():
         if topic_id is not None and topic_name:
             topic_options[topic_name] = topic_id
 
-    st.subheader("Exercicis")
-    if exercises:
+    if show_exercises:
+        st.subheader("Exercicis")
+    if show_exercises and exercises:
         test_count_by_exercise_id = {}
         for exercise in exercises:
             exercise_id = exercise.get("id")
@@ -784,7 +844,8 @@ def render_dashboard():
                 "tema": topic_id_to_name.get(exercise.get("topic_id"), "Sense tema"),
                 "title": exercise.get("title") or "",
                 "description": exercise.get("description") or "",
-                "level": exercise.get("level") or "beginner",
+                "level": level_to_ca(exercise.get("level") or "beginner"),
+                "tipus_entrega": exercise.get("expected_submission_type") or "c_file",
                 "obligatori": bool(exercise.get("is_required", False)),
                 "num_tests": test_count_by_exercise_id.get(exercise.get("id"), 0),
                 "eliminar": False,
@@ -813,7 +874,8 @@ def render_dashboard():
                     "tema": st.column_config.SelectboxColumn("Tema", options=topic_name_options, required=True),
                     "title": "Títol",
                     "description": "Descripció",
-                    "level": st.column_config.SelectboxColumn("Nivell", options=["beginner", "mid", "expert"], required=True),
+                    "level": st.column_config.SelectboxColumn("Nivell", options=["bàsic", "intermedi", "difícil"], required=True),
+                    "tipus_entrega": st.column_config.SelectboxColumn("Tipus entrega", options=["c_file", "zip_makefile"], required=True),
                     "obligatori": "Obligatori",
                     "num_tests": st.column_config.NumberColumn("Num tests", min_value=0, step=1),
                     "eliminar": "Eliminar",
@@ -834,7 +896,8 @@ def render_dashboard():
 
                 new_title = str(row["title"]).strip()
                 new_description = str(row["description"]).strip()
-                new_level = str(row["level"]).strip()
+                new_level = normalize_level_value(str(row["level"]).strip())
+                new_expected_submission_type = str(row["tipus_entrega"]).strip() or "c_file"
                 new_topic_name = str(row["tema"]).strip() or "Sense tema"
                 if new_topic_name.lower() == "none":
                     new_topic_name = "Sense tema"
@@ -842,7 +905,8 @@ def render_dashboard():
 
                 old_title = str(original.get("title") or "").strip()
                 old_description = str(original.get("description") or "").strip()
-                old_level = str(original.get("level") or "beginner").strip()
+                old_level = normalize_level_value(str(original.get("level") or "beginner").strip())
+                old_expected_submission_type = str(original.get("expected_submission_type") or "c_file").strip()
                 old_topic_id = original.get("topic_id")
                 old_is_required = bool(original.get("is_required", False))
                 new_is_required = bool(row["obligatori"])
@@ -853,6 +917,9 @@ def render_dashboard():
                 if new_level not in {"beginner", "mid", "expert"}:
                     st.error(f"Nivell invàlid a l'exercici {exercise_id}.")
                     continue
+                if new_expected_submission_type not in {"c_file", "zip_makefile"}:
+                    st.error(f"Tipus d'entrega invàlid a l'exercici {exercise_id}.")
+                    continue
                 if new_topic_name not in topic_name_to_id:
                     st.error(f"Tema invàlid a l'exercici {exercise_id}.")
                     continue
@@ -861,6 +928,7 @@ def render_dashboard():
                     new_title != old_title
                     or new_description != old_description
                     or new_level != old_level
+                    or new_expected_submission_type != old_expected_submission_type
                     or new_topic_id != old_topic_id
                     or new_is_required != old_is_required
                 )
@@ -870,6 +938,7 @@ def render_dashboard():
                         "title": new_title,
                         "description": new_description or None,
                         "level": new_level,
+                        "expected_submission_type": new_expected_submission_type,
                         "topic_id": new_topic_id,
                         "is_required": new_is_required,
                     }
@@ -902,26 +971,45 @@ def render_dashboard():
                 if deleted_count > 0:
                     queue_flash(f"S'han eliminat {deleted_count} exercici(s).", target="exercises_editor")
                     st.rerun()
-    else:
+    elif show_exercises:
         st.info("Encara no hi ha exercicis creats.")
 
-    show_queued_flash("exercises_editor")
+    if show_exercises:
+        show_queued_flash("exercises_editor")
 
-    st.subheader("Crear exercici")
-    if "create_exercise_mode_json" not in st.session_state:
-        st.session_state.create_exercise_mode_json = False
+    if show_exercises:
+        st.subheader("Crear exercici")
+        if "create_exercise_mode_json" not in st.session_state:
+            st.session_state.create_exercise_mode_json = False
 
-    if not st.session_state.create_exercise_mode_json:
+    if show_exercises and not st.session_state.create_exercise_mode_json:
         if st.button("Importar des de JSON", key="toggle_exercise_to_json_btn"):
             st.session_state.create_exercise_mode_json = True
             st.rerun()
 
+        selected_topic_label = st.selectbox(
+            "Tema",
+            options=list(topic_options.keys()),
+            index=0,
+            key="create_exercise_topic_selector",
+        )
+
         with st.form("create_exercise_form", clear_on_submit=True):
             exercise_title = st.text_input("Títol")
             exercise_description = st.text_area("Descripció de l'exercici", height=80)
-            exercise_level = st.selectbox("Nivell", options=["beginner", "mid", "expert"], index=0)
+            exercise_level = st.selectbox(
+                "Nivell",
+                options=["beginner", "mid", "expert"],
+                index=0,
+                format_func=level_to_ca,
+            )
+            exercise_submission_type = st.selectbox(
+                "Tipus d'entrega esperat",
+                options=["c_file", "zip_makefile"],
+                index=0,
+                help="c_file = fitxer C unic (.c), zip_makefile = projecte .zip amb Makefile",
+            )
             exercise_required = st.checkbox("Exercici obligatori", value=False)
-            selected_topic_label = st.selectbox("Tema", options=list(topic_options.keys()), index=0)
             create_exercise = st.form_submit_button("Crear exercici")
 
         if create_exercise:
@@ -932,6 +1020,7 @@ def render_dashboard():
                     "title": exercise_title.strip(),
                     "description": exercise_description.strip() or None,
                     "level": exercise_level,
+                    "expected_submission_type": exercise_submission_type,
                     "is_required": bool(exercise_required),
                 }
                 selected_topic_id = topic_options[selected_topic_label]
@@ -944,19 +1033,19 @@ def render_dashboard():
                     st.rerun()
                 else:
                     st.error(created_exercise.get("detail", "No s'ha pogut crear l'exercici"))
-    else:
+    elif show_exercises:
         st.caption("Mode JSON actiu")
         if st.button("Tornar a creació manual", key="toggle_exercise_to_manual_btn"):
             st.session_state.create_exercise_mode_json = False
             st.rerun()
 
         with st.form("import_exercises_json_form"):
-            st.caption("Accepta objecte o llista amb claus: title, description, level, is_required (opcional), topic_id (opcional), topic_name (opcional).")
+            st.caption("Accepta objecte o llista amb claus: title, description, level (beginner|mid|expert o bàsic/basic|intermedi|difícil/dificil), expected_submission_type (opcional: c_file|zip_makefile), is_required (opcional), i topic_id o topic_name (almenys un dels dos).")
             exercises_json_input = st.text_area(
                 "JSON d'exercicis",
                 height=220,
                 key="exercises_json_import_input",
-                placeholder='[{"title":"sum","description":"...","level":"beginner","is_required":false,"topic_name":"Basics"}]',
+                placeholder='[{"title":"Suma 2+2","description":"Llegeix dos enters i mostra la suma","level":"bàsic","expected_submission_type":"c_file","is_required":true,"topic_name":"Tema 1"}]',
             )
             import_exercises = st.form_submit_button("Importar exercicis")
 
@@ -987,10 +1076,16 @@ def render_dashboard():
                         st.error(f"Exercici #{idx}: falta 'title'.")
                         continue
 
-                    level = str(item.get("level", "beginner") or "beginner").strip()
+                    level = normalize_level_value(str(item.get("level", "beginner") or "beginner"))
                     if level not in {"beginner", "mid", "expert"}:
                         failed_count += 1
                         st.error(f"Exercici #{idx}: 'level' invàlid.")
+                        continue
+
+                    expected_submission_type = str(item.get("expected_submission_type", "c_file") or "c_file").strip()
+                    if expected_submission_type not in {"c_file", "zip_makefile"}:
+                        failed_count += 1
+                        st.error(f"Exercici #{idx}: 'expected_submission_type' invàlid.")
                         continue
 
                     topic_id_value = item.get("topic_id")
@@ -1002,11 +1097,16 @@ def render_dashboard():
                                 failed_count += 1
                                 st.error(f"Exercici #{idx}: topic_name '{topic_name_value}' no existeix.")
                                 continue
+                    if topic_id_value is None:
+                        failed_count += 1
+                        st.error(f"Exercici #{idx}: cal indicar 'topic_id' o 'topic_name'.")
+                        continue
 
                     payload = {
                         "title": title,
                         "description": (str(item.get("description") or "").strip() or None),
                         "level": level,
+                        "expected_submission_type": expected_submission_type,
                         "is_required": bool(item.get("is_required", False)),
                     }
 
@@ -1033,15 +1133,31 @@ def render_dashboard():
                     queue_flash(f"Importació d'exercicis: {created_count} creat(s).", target="create_exercise")
                     st.rerun()
 
-    show_queued_flash("create_exercise")
+    if show_exercises:
+        show_queued_flash("create_exercise")
 
-    st.subheader("Jocs de prova")
-    if exercises:
+    if show_test_cases:
+        st.subheader("Jocs de prova")
+    if show_test_cases and exercises:
         exercise_options = {
             f"{exercise.get('title') or 'Sense títol'} (id={exercise.get('id')})": exercise.get("id")
             for exercise in exercises
             if exercise.get("id") is not None
         }
+
+        selected_testcase_exercise_id = st.session_state.get("selected_testcase_exercise_id")
+        if selected_testcase_exercise_id is not None:
+            selected_testcase_label = next(
+                (
+                    label
+                    for label, exercise_id in exercise_options.items()
+                    if int(exercise_id) == int(selected_testcase_exercise_id)
+                ),
+                None,
+            )
+            if selected_testcase_label is not None:
+                st.session_state["testcases_exercise_selector"] = selected_testcase_label
+                st.session_state.selected_testcase_exercise_id = None
 
         selected_exercise_label = st.selectbox(
             "Exercici per gestionar jocs de prova",
@@ -1116,12 +1232,12 @@ def render_dashboard():
                 st.rerun()
 
             with st.form("import_testcases_json_form"):
-                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input,expected,mode,ignore_whitespace}.")
+                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|contains), ignore_whitespace}.")
                 testcases_json_input = st.text_area(
                     "JSON de jocs de prova",
                     height=220,
                     key="testcases_json_import_input",
-                    placeholder='[{"name":"sum_1","content":{"input":"2 3\\n","expected":"5\\n","mode":"exact","ignore_whitespace":false}}]',
+                    placeholder='[{"name":"suma_2_mes_2","content":{"input":"2 2","expected":"4","mode":"exact","ignore_whitespace":true}}]',
                 )
                 import_testcases = st.form_submit_button("Importar jocs de prova")
 
@@ -1180,14 +1296,16 @@ def render_dashboard():
                     if created_count > 0:
                         queue_flash(f"Importació de jocs de prova: {created_count} creat(s).", target="test_cases")
                         st.rerun()
-    else:
+    elif show_test_cases:
         st.info("Cal crear com a mínim un exercici per gestionar jocs de prova.")
 
-    show_queued_flash("test_cases")
+    if show_test_cases:
+        show_queued_flash("test_cases")
 
-    st.subheader("Estat alumnat per tema")
     topic_status_api_status = None
-    if topics:
+    if show_tracking:
+        st.subheader("Estat alumnat per tema")
+    if show_tracking and topics:
         status_topic_options = {
             f"{topic.get('name') or 'Tema'} (id={topic.get('id')})": topic.get("id")
             for topic in topics
@@ -1216,15 +1334,19 @@ def render_dashboard():
                         "bàsic": f"{row.get('completed_beginner', 0)}/{row.get('required_beginner', 0)}",
                         "intermedi": f"{row.get('completed_mid', 0)}/{row.get('required_mid', 0)}",
                         "difícil": f"{row.get('completed_expert', 0)}/{row.get('required_expert', 0)}",
-                        "mínims tema": "Sí" if bool(row.get("topic_minimums_met")) else "No",
+                        "obligatoris": f"{row.get('required_exercises_completed', 0)}/{row.get('required_exercises_total', 0)}",
                     }
                     for row in topic_status_rows
                 ]
                 status_df = pd.DataFrame(status_rows)
+                topic_passed_by_idx = {
+                    idx: bool(row.get("topic_minimums_met"))
+                    for idx, row in enumerate(topic_status_rows)
+                }
 
                 def highlight_students_with_minimums(row):
                     # Verde para alumnado que ya cumple mínimos del tema.
-                    if row.get("mínims tema") == "Sí":
+                    if topic_passed_by_idx.get(int(row.name), False):
                         return ["background-color: #d1fae5"] * len(row)
                     return [""] * len(row)
 
@@ -1240,11 +1362,12 @@ def render_dashboard():
         else:
             detail_message = topic_status_rows.get("detail", "No s'ha pogut carregar l'estat per tema") if isinstance(topic_status_rows, dict) else "No s'ha pogut carregar l'estat per tema"
             st.error(detail_message)
-    else:
+    elif show_tracking:
         st.info("Cal crear temes per consultar l'estat de l'alumnat.")
 
-    st.subheader("Alumnes")
-    if students:
+    if show_tracking:
+        st.subheader("Alumnes")
+    if show_tracking and students:
         student_rows = [
             {
                 "id": student.get("id"),
@@ -1255,11 +1378,309 @@ def render_dashboard():
             for student in students
         ]
         st.dataframe(pd.DataFrame(student_rows), use_container_width=True, hide_index=True)
-    else:
+    elif show_tracking:
         if st_status == 200:
             st.info("Encara no hi ha alumnes registrats.")
         else:
             st.error("No s'ha pogut carregar el llistat d'alumnes.")
+
+    if show_tracking:
+        st.subheader("Entregues")
+
+        student_filter_options = {"Tots els alumnes": None}
+        for student in students:
+            student_id = student.get("id")
+            if student_id is None:
+                continue
+            student_filter_options[
+                f"{student.get('username') or 'alumne'} ({student.get('email') or 'sense email'})"
+            ] = int(student_id)
+
+        exercise_filter_options = {"Tots els exercicis": None}
+        for exercise in exercises:
+            exercise_id = exercise.get("id")
+            if exercise_id is None:
+                continue
+            exercise_filter_options[f"{exercise.get('title') or 'exercici'} (id={exercise_id})"] = int(exercise_id)
+
+        preselected_exercise_id = st.session_state.get("selected_teacher_submission_exercise_id")
+        if preselected_exercise_id is not None:
+            preselected_exercise_label = next(
+                (
+                    label
+                    for label, exercise_id in exercise_filter_options.items()
+                    if exercise_id is not None and int(exercise_id) == int(preselected_exercise_id)
+                ),
+                None,
+            )
+            if preselected_exercise_label is not None:
+                st.session_state["teacher_submissions_exercise_filter"] = preselected_exercise_label
+                st.session_state.selected_teacher_submission_exercise_id = None
+
+        filter_col1, filter_col2 = st.columns(2)
+        selected_student_filter = filter_col1.selectbox(
+            "Filtre alumne",
+            options=list(student_filter_options.keys()),
+            key="teacher_submissions_student_filter",
+        )
+        selected_exercise_filter = filter_col2.selectbox(
+            "Filtre exercici",
+            options=list(exercise_filter_options.keys()),
+            key="teacher_submissions_exercise_filter",
+        )
+        user_query = st.text_input("Cerca per usuari/email", key="teacher_submissions_user_query")
+
+        query_parts = [
+            f"subject_id={selected_subject_id}",
+            "limit=200",
+        ]
+        selected_student_id = student_filter_options[selected_student_filter]
+        selected_exercise_id_filter = exercise_filter_options[selected_exercise_filter]
+        if selected_student_id is not None:
+            query_parts.append(f"user_id={selected_student_id}")
+        if selected_exercise_id_filter is not None:
+            query_parts.append(f"exercise_id={selected_exercise_id_filter}")
+        if user_query.strip():
+            query_parts.append(f"user_query={urllib.parse.quote_plus(user_query.strip())}")
+
+        submissions_path = "/teacher/submissions?" + "&".join(query_parts)
+        ts_status, teacher_submissions_raw = api_get(base_url, submissions_path, token)
+        teacher_submissions = teacher_submissions_raw if ts_status == 200 and isinstance(teacher_submissions_raw, list) else []
+
+        if ts_status != 200:
+            if isinstance(teacher_submissions_raw, dict):
+                st.error(teacher_submissions_raw.get("detail", "No s'han pogut carregar les entregues."))
+            else:
+                st.error("No s'han pogut carregar les entregues.")
+        elif not teacher_submissions:
+            st.info("No hi ha entregues amb aquests filtres.")
+        else:
+            submission_rows = [
+                {
+                    "job_id": item.get("job_id"),
+                    "usuari": item.get("username") or "",
+                    "email": item.get("email") or "",
+                    "exercici": item.get("exercise_title") or "",
+                    "estat": item.get("status") or "",
+                    "veredicte": item.get("verdict") or "-",
+                    "creat": item.get("created_at") or "",
+                    "finalitzat": item.get("completed_at") or "",
+                }
+                for item in teacher_submissions
+            ]
+
+            submission_df = pd.DataFrame(submission_rows)
+
+            def _highlight_ac_rows(row):
+                verdict = str(row.get("veredicte") or "").strip().upper()
+                if verdict == "AC":
+                    return ["background-color: #dcfce7"] * len(row)
+                return [""] * len(row)
+
+            st.caption("Fes clic en una fila per descarregar automàticament l'entrega.")
+            selection_event = st.dataframe(
+                submission_df.style.apply(_highlight_ac_rows, axis=1),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="teacher_submissions_table",
+            )
+
+            selected_download_job_id = None
+            selected_rows = []
+            if selection_event and isinstance(selection_event, dict):
+                selected_rows = selection_event.get("selection", {}).get("rows", [])
+            elif selection_event:
+                selection_payload = getattr(selection_event, "selection", None)
+                if isinstance(selection_payload, dict):
+                    selected_rows = selection_payload.get("rows", [])
+                elif selection_payload is not None:
+                    selected_rows = getattr(selection_payload, "rows", []) or []
+
+            if selected_rows:
+                row_idx = int(selected_rows[0])
+                if 0 <= row_idx < len(submission_df):
+                    selected_download_job_id = int(submission_df.iloc[row_idx]["job_id"])
+
+            if selected_download_job_id is None:
+                st.info("Selecciona una fila de la taula per activar la descàrrega de l'entrega.")
+
+            if selected_download_job_id is not None:
+                selected_row = next(
+                    (item for item in teacher_submissions if int(item.get("job_id") or -1) == selected_download_job_id),
+                    None,
+                )
+                if selected_row:
+                    st.write(
+                        f"Entrega seleccionada: Job {selected_download_job_id} - "
+                        f"{selected_row.get('exercise_title') or 'exercici'} - "
+                        f"{selected_row.get('username') or 'usuari'}"
+                    )
+
+            if selected_download_job_id is not None and st.session_state.teacher_download_job_id != selected_download_job_id:
+                dl_status, dl_bytes, dl_headers, dl_error = api_get_bytes(
+                    base_url,
+                    f"/teacher/submissions/{selected_download_job_id}/download",
+                    token,
+                )
+                if dl_status == 200 and dl_bytes is not None:
+                    content_disposition = dl_headers.get("Content-Disposition") or dl_headers.get("content-disposition") or ""
+                    st.session_state.teacher_download_filename = _filename_from_content_disposition(
+                        content_disposition,
+                        fallback=f"submission_job_{selected_download_job_id}.bin",
+                    )
+                    st.session_state.teacher_download_mime = dl_headers.get("Content-Type") or dl_headers.get("content-type") or "application/octet-stream"
+                    st.session_state.teacher_download_bytes = dl_bytes
+                    st.session_state.teacher_download_job_id = selected_download_job_id
+                else:
+                    detail = dl_error.get("detail", "No s'ha pogut descarregar l'entrega.") if isinstance(dl_error, dict) else "No s'ha pogut descarregar l'entrega."
+                    st.session_state.teacher_download_job_id = None
+                    st.session_state.teacher_download_bytes = None
+                    st.error(detail)
+            elif selected_download_job_id is None:
+                st.session_state.teacher_download_job_id = None
+                st.session_state.teacher_download_bytes = None
+
+            if selected_download_job_id is not None and st.session_state.teacher_download_bytes and st.session_state.teacher_download_job_id == selected_download_job_id:
+                if st.session_state.teacher_auto_download_last_job_id != selected_download_job_id:
+                    data_b64 = base64.b64encode(st.session_state.teacher_download_bytes).decode("ascii")
+                    safe_filename = html.escape(st.session_state.teacher_download_filename or "entrega.bin")
+                    safe_mime = html.escape(st.session_state.teacher_download_mime or "application/octet-stream")
+                    st.markdown(
+                        f"""
+                        <a id=\"jutge-auto-download\" href=\"data:{safe_mime};base64,{data_b64}\" download=\"{safe_filename}\"></a>
+                        <script>
+                        const anchor = document.getElementById("jutge-auto-download");
+                        if (anchor) {{
+                          anchor.click();
+                        }}
+                        </script>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+                    st.session_state.teacher_auto_download_last_job_id = selected_download_job_id
+
+                st.download_button(
+                    "Descarregar entrega (si el navegador bloqueja l'automàtica)",
+                    data=st.session_state.teacher_download_bytes,
+                    file_name=st.session_state.teacher_download_filename or "entrega.bin",
+                    mime=st.session_state.teacher_download_mime or "application/octet-stream",
+                    key=f"teacher_download_button_{selected_download_job_id}",
+                )
+
+            ac_submissions = [
+                item
+                for item in teacher_submissions
+                if str(item.get("verdict") or "").strip().upper() == "AC" and item.get("job_id") is not None
+            ]
+            ac_job_ids = sorted(int(item.get("job_id")) for item in ac_submissions)
+
+            selected_student_name = "tots els alumnes"
+            if selected_student_id is not None:
+                selected_student_name = next(
+                    (
+                        str(student.get("username") or "")
+                        for student in students
+                        if student.get("id") is not None and int(student.get("id")) == int(selected_student_id)
+                    ),
+                    "tots els alumnes",
+                )
+
+            selected_exercise_name = "tots els exercicis"
+            if selected_exercise_id_filter is not None:
+                selected_exercise_name = next(
+                    (
+                        str(exercise.get("title") or "")
+                        for exercise in exercises
+                        if exercise.get("id") is not None and int(exercise.get("id")) == int(selected_exercise_id_filter)
+                    ),
+                    "tots els exercicis",
+                )
+
+            student_fragment = _sanitize_pack_name_fragment(selected_student_name, "tots els alumnes")
+            exercise_fragment = _sanitize_pack_name_fragment(selected_exercise_name, "tots els exercicis")
+            bulk_zip_filename = f"{student_fragment}_{exercise_fragment}.zip"
+
+            ac_signature = (
+                f"subject={selected_subject_id}|student={student_fragment}|exercise={exercise_fragment}|"
+                f"ac_jobs={','.join(str(job_id) for job_id in ac_job_ids)}"
+            )
+
+            st.divider()
+            st.subheader("Descàrrega massiva")
+            st.caption("Descarrega en un clic un ZIP amb totes les entregues AC del filtre actual.")
+            st.write(f"Entregues AC detectades: **{len(ac_submissions)}**")
+            st.write(f"Nom del pack: **{bulk_zip_filename}**")
+
+            if not ac_submissions:
+                st.info("No hi ha entregues AC en el filtre actual.")
+                st.session_state.teacher_bulk_download_bytes = None
+                st.session_state.teacher_bulk_download_filename = None
+                st.session_state.teacher_bulk_download_signature = None
+            else:
+                if st.session_state.teacher_bulk_download_signature != ac_signature:
+                    file_buffer = io.BytesIO()
+                    used_names: set[str] = set()
+                    success_count = 0
+                    failed_jobs: list[int] = []
+
+                    with st.spinner("Actualitzant ZIP d'entregues AC per aquest filtre..."):
+                        with zipfile.ZipFile(file_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zip_out:
+                            for item in ac_submissions:
+                                job_id = int(item.get("job_id"))
+                                dl_status, dl_bytes, dl_headers, _ = api_get_bytes(
+                                    base_url,
+                                    f"/teacher/submissions/{job_id}/download",
+                                    token,
+                                )
+                                if dl_status != 200 or dl_bytes is None:
+                                    failed_jobs.append(job_id)
+                                    continue
+
+                                content_disposition = dl_headers.get("Content-Disposition") or dl_headers.get("content-disposition") or ""
+                                base_name = _filename_from_content_disposition(
+                                    content_disposition,
+                                    fallback=f"submission_job_{job_id}.bin",
+                                )
+                                safe_base_name = re.sub(r"[^a-zA-Z0-9._-]", "_", base_name).strip("._") or f"submission_job_{job_id}.bin"
+                                final_name = f"job_{job_id}_{safe_base_name}"
+                                dedupe_idx = 1
+                                while final_name in used_names:
+                                    root, ext = os.path.splitext(f"job_{job_id}_{safe_base_name}")
+                                    final_name = f"{root}_{dedupe_idx}{ext}"
+                                    dedupe_idx += 1
+                                used_names.add(final_name)
+                                zip_out.writestr(final_name, dl_bytes)
+                                success_count += 1
+
+                    if success_count == 0:
+                        st.error("No s'ha pogut descarregar cap entrega AC per generar el ZIP.")
+                        st.session_state.teacher_bulk_download_bytes = None
+                        st.session_state.teacher_bulk_download_filename = None
+                        st.session_state.teacher_bulk_download_signature = None
+                    else:
+                        st.session_state.teacher_bulk_download_bytes = file_buffer.getvalue()
+                        st.session_state.teacher_bulk_download_filename = bulk_zip_filename
+                        st.session_state.teacher_bulk_download_signature = ac_signature
+                        if failed_jobs:
+                            st.warning(
+                                "ZIP generat amb incidències. No s'han pogut incloure els jobs: "
+                                + ", ".join(str(job_id) for job_id in failed_jobs)
+                            )
+
+                bulk_ready = (
+                    st.session_state.teacher_bulk_download_bytes
+                    and st.session_state.teacher_bulk_download_signature == ac_signature
+                )
+                if bulk_ready:
+                    st.download_button(
+                        "Descarregar totes les AC (ZIP)",
+                        data=st.session_state.teacher_bulk_download_bytes,
+                        file_name=st.session_state.teacher_bulk_download_filename or bulk_zip_filename,
+                        mime="application/zip",
+                        key=f"teacher_bulk_ac_download_btn_{student_fragment}_{exercise_fragment}",
+                    )
 
     # st.subheader("Top leaderboard")
     # if leaderboard:
@@ -1267,31 +1688,122 @@ def render_dashboard():
     # else:
     #     st.info("Encara no hi ha dades del leaderboard.")
 
-    with st.expander("Estat de connexió API"):
-        st.write(
-            {
-                "GET /topics": tp_status,
-                "GET /exercises": ex_status,
-                "GET /students": st_status,
-                "GET /quiz-questions": qq_status,
-                "GET /topics/{id}/students-status": topic_status_api_status,
-                # "GET /leaderboard": lb_status,
-            }
-        )
+    if show_overview:
+        with st.expander("Estat de connexió API"):
+            st.write(
+                {
+                    "GET /topics": tp_status,
+                    "GET /exercises": ex_status,
+                    "GET /students": st_status,
+                    "GET /quiz-questions": qq_status,
+                    "GET /topics/{id}/students-status": topic_status_api_status,
+                    # "GET /leaderboard": lb_status,
+                }
+            )
 
 
 def main():
     # Punto de entrada de la aplicación: carga configuración y decide qué pantalla mostrar.
     ensure_session()
 
+    params = st.query_params
+    lti_token = params.get("token")
+    lti_subject_id = params.get("subject_id")
+    lti_exercise_id = params.get("exercise_id")
+
+    # Apply LTI-derived defaults before any widget is instantiated.
+    if not st.session_state.get("_lti_target_processed"):
+        target_value = str(params.get("target") or "").strip().lower()
+        target_to_section = {
+            "overview": "Inici",
+            "inici": "Inici",
+            "topics": "Temari",
+            "temari": "Temari",
+            "questions": "Preguntes",
+            "preguntes": "Preguntes",
+            "exercises": "Exercicis",
+            "exercicis": "Exercicis",
+            "tests": "Proves",
+            "proves": "Proves",
+            "testcases": "Proves",
+            "students": "Alumnat",
+            "alumnat": "Alumnat",
+        }
+        selected_section = target_to_section.get(target_value)
+        if lti_exercise_id:
+            selected_section = "Alumnat"
+        if selected_section:
+            st.session_state.admin_section = selected_section
+        st.session_state._lti_target_processed = True
+
+    if not st.session_state.get("_lti_exercise_id_processed") and lti_exercise_id:
+        try:
+            st.session_state.selected_teacher_submission_exercise_id = int(lti_exercise_id)
+        except (TypeError, ValueError):
+            pass
+        st.session_state._lti_exercise_id_processed = True
+
+    if lti_subject_id and st.session_state.get("selected_subject_id") is None:
+        try:
+            st.session_state.selected_subject_id = int(lti_subject_id)
+        except (TypeError, ValueError):
+            pass
+
     with st.sidebar:
-        st.header("Configuració")
-        base_url = st.text_input("URL base API", value=st.session_state.base_url)
-        st.session_state.base_url = base_url.rstrip("/")
+        if st.session_state.get("token"):
+            profile = st.session_state.get("profile") or {}
+            email_value = (profile.get("email") or "").strip()
+            friendly_email = email_value if email_value and not email_value.endswith("@lti.local") else None
+            role_value = (profile.get("role") or "").strip().lower()
+            fallback_label = "Professor" if role_value == "teacher" else "Usuari"
+            display_name = (
+                profile.get("full_name")
+                or profile.get("name")
+                or profile.get("display_name")
+                or friendly_email
+                or fallback_label
+            )
+            st.markdown(f"Connectat com a **{display_name}**")
+
+            st.radio(
+                "Apartats",
+                options=[
+                    "Inici",
+                    "Temari",
+                    "Preguntes",
+                    "Exercicis",
+                    "Proves",
+                    "Alumnat",
+                ],
+                key="admin_section",
+                label_visibility="collapsed",
+            )
+    if lti_token and not st.session_state._lti_params_processed and not st.session_state.token:
+        status, me = api_get(st.session_state.base_url, "/me", lti_token)
+        if status == 200 and me.get("role") == "teacher":
+            st.session_state.token = lti_token
+            st.session_state.profile = me
+            st.session_state._lti_params_processed = True
+            if lti_subject_id:
+                try:
+                    st.session_state.selected_subject_id = int(lti_subject_id)
+                except (TypeError, ValueError):
+                    pass
+            st.rerun()
+        if status == 200 and me.get("role") != "teacher":
+            st.error("Aquest panell requereix rol teacher a Atenea.")
+            return
+        st.error("Token LTI invàlid. Torna a entrar des d'Atenea.")
+        return
 
     if not st.session_state.token:
-        render_login()
+        render_lti_required_message()
         return
+
+    # Refresca perfil para reflejar cambios de nombre legible en /me sin requerir reinicio manual.
+    profile_status, refreshed_profile = api_get(st.session_state.base_url, "/me", st.session_state.token)
+    if profile_status == 200 and isinstance(refreshed_profile, dict):
+        st.session_state.profile = refreshed_profile
 
     render_dashboard()
 

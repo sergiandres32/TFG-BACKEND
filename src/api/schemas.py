@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 
 
 class UserCreate(BaseModel):
@@ -75,6 +75,7 @@ class ExerciseCreate(BaseModel):
     description: Optional[str]
     level: str
     topic_id: Optional[int] = None
+    expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
 
     model_config = ConfigDict(
@@ -84,6 +85,7 @@ class ExerciseCreate(BaseModel):
                 "description": "Calculate nth Fibonacci number",
                 "level": "expert",
                 "topic_id": 1,
+                "expected_submission_type": "c_file",
                 "is_required": False,
             }
         }
@@ -95,6 +97,7 @@ class ExerciseUpdate(BaseModel):
     description: Optional[str]
     level: str
     topic_id: Optional[int] = None
+    expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
 
     model_config = ConfigDict(
@@ -104,6 +107,7 @@ class ExerciseUpdate(BaseModel):
                 "description": "Calculate nth Fibonacci number",
                 "level": "expert",
                 "topic_id": 1,
+                "expected_submission_type": "c_file",
                 "is_required": False,
             }
         }
@@ -116,6 +120,7 @@ class ExerciseListItem(BaseModel):
     title: str
     description: Optional[str] = None
     level: str
+    expected_submission_type: Literal["c_file", "zip_makefile"]
     is_required: bool
     completed: bool
 
@@ -127,6 +132,7 @@ class ExerciseListItem(BaseModel):
                 "title": "sum",
                 "description": "Sum two integers",
                 "level": "beginner",
+                "expected_submission_type": "c_file",
                 "is_required": False,
                 "completed": True,
             }
@@ -160,6 +166,7 @@ class ExerciseDetail(BaseModel):
     title: str
     description: Optional[str] = None
     level: str
+    expected_submission_type: Literal["c_file", "zip_makefile"]
     is_required: bool
     completed: bool
     public_test_cases: list[ExercisePublicTestCase]
@@ -172,6 +179,7 @@ class ExerciseDetail(BaseModel):
                 "title": "sum",
                 "description": "Sum two integers",
                 "level": "beginner",
+                "expected_submission_type": "c_file",
                 "is_required": False,
                 "completed": True,
                 "public_test_cases": [
@@ -198,6 +206,8 @@ class TopicCreate(BaseModel):
     required_beginner: int = 0
     required_mid: int = 0
     required_expert: int = 0
+    secret_code: Optional[str] = None
+    secret_message: Optional[str] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -220,6 +230,8 @@ class TopicOut(BaseModel):
     required_beginner: int
     required_mid: int
     required_expert: int
+    secret_code: Optional[str] = None
+    secret_message: Optional[str] = None
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -243,6 +255,8 @@ class TopicUpdate(BaseModel):
     required_beginner: int = 0
     required_mid: int = 0
     required_expert: int = 0
+    secret_code: Optional[str] = None
+    secret_message: Optional[str] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -315,6 +329,32 @@ class SubjectPasswordUpdate(BaseModel):
     enrollment_password: Optional[str] = None
 
 
+class LtiPlatformCreate(BaseModel):
+    name: str
+    consumer_key: str
+    consumer_secret: str
+    is_active: bool = True
+
+
+class LtiPlatformOut(BaseModel):
+    id: int
+    name: str
+    consumer_key: str
+    is_active: bool
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class LtiLaunchResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user_id: int
+    username: str
+    role: str
+    subject_id: int
+    role_in_subject: str
+
+
 class TestCaseCreate(BaseModel):
     exercise_id: int
     name: str
@@ -384,7 +424,18 @@ class TopicStudentStatusItem(BaseModel):
     beginner_minimum_met: bool
     mid_minimum_met: bool
     expert_minimum_met: bool
+    required_exercises_total: int
+    required_exercises_completed: int
+    required_exercises_met: bool
     topic_minimums_met: bool
+
+
+class TopicSecretUnlockOut(BaseModel):
+    topic_id: int
+    topic_name: str
+    retroaccio: Optional[str] = None
+    created_at: Optional[str] = None
+    newly_unlocked: bool
 
 
 class SubmissionCreate(BaseModel):
@@ -449,6 +500,7 @@ class JobResponse(BaseModel):
 class UserProfile(BaseModel):
     id: int
     username: str
+    display_name: Optional[str] = None
     email: str
     role: str
     leaderboard_rank: int
@@ -459,6 +511,7 @@ class UserProfile(BaseModel):
             "example": {
                 "id": 3,
                 "username": "alumno_a_base",
+                "display_name": "Nom Cognom",
                 "email": "alumno_a_base@example.com",
                 "role": "student",
                 "leaderboard_rank": 1,

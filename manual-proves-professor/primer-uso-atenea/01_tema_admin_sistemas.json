@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Administracio de sistemes operatius",
+    "description": "Tema inicial de demostracio per al primer accés des d'Atenea.",
+    "weight": 1.0,
+    "required_beginner": 1,
+    "required_mid": 0,
+    "required_expert": 0,
+    "retroaccio": "Has superat els minims obligatoris del tema inicial."
+  }
+]

@@ -26,10 +26,19 @@ services:
     environment:
       DATABASE_URL: postgresql://jutge:jutge_pass@db:5432/jutge_db
       JWT_SECRET: dev-secret-key
-      # URL pública del Streamlit de alumno a la que redirigir tras LTI launch.
-      # Cambia esto a la URL de ngrok o producción antes de registrar en Atenea.
-      # Ejemplo: LTI_UI_BASE_URL: https://xxxx.ngrok.io
+      # Bootstrap opcional para primer launch LTI sin configurar plataforma manualmente.
+      # Si oauth_consumer_key coincide con LTI_BOOTSTRAP_CONSUMER_KEY, la plataforma se crea/activa automáticamente.
+      LTI_BOOTSTRAP_PLATFORM_NAME: ${LTI_BOOTSTRAP_PLATFORM_NAME:-atenea-upc}
+      LTI_BOOTSTRAP_CONSUMER_KEY: ${LTI_BOOTSTRAP_CONSUMER_KEY:-jutge-key}
+      LTI_BOOTSTRAP_CONSUMER_SECRET: ${LTI_BOOTSTRAP_CONSUMER_SECRET:-jutge-secret}
+      # Redirección tras launch LTI por rol.
+      # Ejemplo:
+      # - LTI_UI_BASE_URL_TEACHER: https://xxxx.ngrok-free.dev/admin
+      # - LTI_UI_BASE_URL_STUDENT: https://xxxx.ngrok-free.dev/student
+      # Fallback legacy si no hay URLs por rol:
       LTI_UI_BASE_URL: ${LTI_UI_BASE_URL:-}
+      LTI_UI_BASE_URL_TEACHER: ${LTI_UI_BASE_URL_TEACHER:-}
+      LTI_UI_BASE_URL_STUDENT: ${LTI_UI_BASE_URL_STUDENT:-}
     volumes:
       - .:/judge
     depends_on:
@@ -61,10 +70,9 @@ services:
       - .:/judge
     ports:
       - "8501:8501"
-    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0 --server.baseUrlPath admin"]
+    command: ["/bin/sh", "-c", "streamlit run admin_streamlit.py --server.port 8501 --server.address 0.0.0.0"]
 
   streamlit_student:
     build:
@@ -77,11 +85,9 @@ services:
       - .:/judge
     ports:
       - "8502:8502"
-    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false --server.baseUrlPath student"]
-
+    command: ["/bin/sh", "-c", "streamlit run student_streamlit.py --server.port 8502 --server.address 0.0.0.0 --server.enableXsrfProtection false --server.enableCORS false"]
 
   streamlit_subjects:
     build:
@@ -94,23 +100,9 @@ services:
       - .:/judge
     ports:
       - "8503:8503"
-    restart: unless-stopped
     depends_on:
       - api
-    command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0 --server.baseUrlPath subjects"]
-
-  ngrok_proxy:
-    image: nginx:1.27-alpine
-    container_name: jutge_ngrok_proxy
-    ports:
-      - "8080:8080"
-    volumes:
-      - ./nginx.ngrok.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      - api
-      - streamlit_admin
-      - streamlit_student
-      - streamlit_subjects
+    command: ["/bin/sh", "-c", "streamlit run subjects_streamlit.py --server.port 8503 --server.address 0.0.0.0"]
 
 volumes:
   jutge_pg_data:

@@ -12,7 +12,7 @@ from .database import get_db
 
 SECRET = os.getenv("JWT_SECRET", "secret-dev")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/lti/launch")
 
 
 def create_access_token(data: dict, expires_delta: int = 60 * 60 * 24) -> str:

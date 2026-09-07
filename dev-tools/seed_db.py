@@ -52,8 +52,18 @@ def create_subject(db, *, code: str, name: str, is_active: bool = True) -> model
     return subject
 
 
-def enroll_user_in_subject(db, *, user_id: int, subject_id: int) -> models.UserSubjectEnrollment:
-    enrollment = models.UserSubjectEnrollment(user_id=user_id, subject_id=subject_id)
+def enroll_user_in_subject(
+    db,
+    *,
+    user_id: int,
+    subject_id: int,
+    role_in_subject: models.RoleEnum = models.RoleEnum.student,
+) -> models.UserSubjectEnrollment:
+    enrollment = models.UserSubjectEnrollment(
+        user_id=user_id,
+        subject_id=subject_id,
+        role_in_subject=role_in_subject,
+    )
     db.add(enrollment)
     db.commit()
     db.refresh(enrollment)
@@ -238,8 +248,18 @@ def seed_database(teacher_username: str, teacher_email: str, teacher_password: s
             name="Administracio de Sistemes i Xarxes",
         )
 
-        enroll_user_in_subject(db, user_id=teacher.id, subject_id=paco_subject.id)
-        enroll_user_in_subject(db, user_id=teacher.id, subject_id=adso_subject.id)
+        enroll_user_in_subject(
+            db,
+            user_id=teacher.id,
+            subject_id=paco_subject.id,
+            role_in_subject=models.RoleEnum.teacher,
+        )
+        enroll_user_in_subject(
+            db,
+            user_id=teacher.id,
+            subject_id=adso_subject.id,
+            role_in_subject=models.RoleEnum.teacher,
+        )
 
         perfect_student = create_student(
             db,

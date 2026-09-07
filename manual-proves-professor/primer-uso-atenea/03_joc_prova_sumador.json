@@ -1,0 +1,11 @@
+[
+  {
+    "name": "suma_2_mes_2",
+    "content": {
+      "input": "2 2",
+      "expected": "4",
+      "mode": "exact",
+      "ignore_whitespace": true
+    }
+  }
+]

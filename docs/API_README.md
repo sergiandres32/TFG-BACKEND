@@ -1,7 +1,7 @@
 # Jutge API - Documentación Completa
 
 FastAPI + SQLAlchemy para:
-- Registrar/login usuarios (JWT)
+- Autenticación principal vía Atenea LTI (JWT interno)
 - Gestionar asignaturas e inscripciones por usuario
 - Consultar ejercicios y test cases públicos
 - Enviar submissions de código
@@ -52,7 +52,7 @@ http://localhost:8000/docs  # Swagger interactivo
 
 ## Autenticación
 
-Todos los endpoints (excepto `/users`, `/token`) requieren JWT en el header:
+Todos los endpoints de negocio requieren JWT en el header:
 
 ```bash
 Authorization: Bearer <token>
@@ -96,7 +96,7 @@ con status `403 Forbidden`.
 
 ## Endpoints de Autenticación
 
-### 1. POST `/users` - Registrar usuario
+### 1. POST `/users` - Registro local deshabilitado
 
 **Request:**
 ```json
@@ -107,40 +107,92 @@ con status `403 Forbidden`.
 }
 ```
 
-**Response (200):**
+**Response (410):**
 ```json
 {
-  "id": 5,
-  "username": "alumno_nuevo",
-  "email": "alumno@example.com",
-  "role": "student"
+  "detail": "Local user registration is disabled. Access must be provisioned through Atenea LTI."
 }
 ```
 
-**Errores:**
-- `400` - Username o email ya registrado
+No se admite alta local de alumnado.
 
 ---
 
-### 2. POST `/token` - Login (Obtener JWT)
+### 2. POST `/token` - Login local deshabilitado
 
-**Request:**
-```
-Content-Type: application/x-www-form-urlencoded
-
-username=alumno_a_base&password=alumno123
-```
-
-**Response (200):**
+**Response (410):**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer"
+  "detail": "Local password login is disabled. Access through Atenea LTI launch."
 }
 ```
 
-**Errores:**
-- `400` - Credenciales incorrectas
+Aplica a alumnado y profesorado.
+
+---
+
+### 3. POST `/lti/launch` - Login principal para alumnado (Atenea)
+
+`/lti/launch` es el punto de entrada recomendado para alumnado y genera el JWT interno tras validar firma OAuth 1.0 de Atenea.
+
+---
+
+## Endpoints LTI (Atenea / Moodle)
+
+Integracion inicial seria con LTI 1.1 (OAuth 1.0 HMAC-SHA1) para auto-provisioning y mapeo por contexto.
+
+### POST `/lti/platforms` - Crear/actualizar plataforma LTI (solo profesor)
+
+Permite configurar `consumer_key` y `consumer_secret` del LMS.
+
+**Request:**
+```json
+{
+  "name": "atenea-upc",
+  "consumer_key": "atenea-adso-2026",
+  "consumer_secret": "atenea-secret-2026",
+  "is_active": true
+}
+```
+
+### GET `/lti/platforms` - Listar plataformas LTI (solo profesor)
+
+Devuelve configuraciones LTI activas/inactivas para administracion.
+
+### POST `/lti/launch` - Launch LTI 1.1
+
+Endpoint de entrada desde Atenea (form POST firmado por OAuth 1.0).
+
+Comportamiento:
+- Valida firma OAuth (`HMAC-SHA1`).
+- Si no existe plataforma para `oauth_consumer_key`, puede auto-crear/activar una configuracion inicial
+  usando `LTI_BOOTSTRAP_CONSUMER_KEY` + `LTI_BOOTSTRAP_CONSUMER_SECRET`.
+- Resuelve/crea usuario interno desde `user_id` LMS.
+- Resuelve/crea asignatura por `context_id` (auto-creacion solo si launch instructor).
+- Matricula usuario en asignatura con `role_in_subject`.
+- Soporta parametro personalizado `target` para atajos UI.
+- Devuelve JWT interno para continuar flujo normal Jutge.
+
+Targets LTI soportados:
+- `subjects`: redirige a `/subjects`.
+- `admin`: redirige a `/admin` (solo profesor). Es equivalente a `exercises` como alias de panel.
+- `exercises`: redirige a `/admin` (solo profesor). Se conserva como alias historico del mismo panel.
+- `exercise:123` o `custom_exercise_id=123`: en profesorado redirige a `Entregues` con el filtro del ejercicio `123`; en alumnado redirige a `Ejercicis` con ese ejercicio preseleccionado.
+
+Si no se envia `target`, el launch entra por el destino normal de cada rol: profesor a `admin`, alumno a `student`.
+
+Respuesta ejemplo:
+```json
+{
+  "access_token": "<jwt>",
+  "token_type": "bearer",
+  "user_id": 12,
+  "username": "atenea_teacher_1001",
+  "role": "teacher",
+  "subject_id": 5,
+  "role_in_subject": "teacher"
+}
+```
 
 ---
 
@@ -279,6 +331,7 @@ Authorization: Bearer <token>
     "title": "sum",
     "description": "Sum two integers",
     "level": "beginner",
+    "expected_submission_type": "c_file",
     "completed": true
   },
   {
@@ -286,6 +339,7 @@ Authorization: Bearer <token>
     "title": "sort_words",
     "description": "Sort words alphabetically",
     "level": "mid",
+    "expected_submission_type": "zip_makefile",
     "completed": false
   }
 ]
@@ -308,6 +362,7 @@ Authorization: Bearer <token>
   "title": "sum",
   "description": "Sum two integers",
   "level": "beginner",
+  "expected_submission_type": "c_file",
   "completed": true,
   "public_test_cases": [
     {
@@ -351,7 +406,9 @@ Content-Type: application/json
 {
   "title": "Fibonacci",
   "description": "Calculate nth Fibonacci number",
-  "level": "expert"
+  "level": "expert",
+  "topic_id": 1,
+  "expected_submission_type": "c_file"
 }
 ```
 
@@ -405,16 +462,20 @@ Crea un **Job** asincrónico que será evaluado por el worker.
 **Headers:**
 ```
 Authorization: Bearer <token>
-Content-Type: application/json
+Content-Type: multipart/form-data
 ```
 
-**Request:**
-```json
-{
-  "exercise_id": 1,
-  "code": "#include <stdio.h>\nint main() {\n  int a, b;\n  scanf(\"%d %d\", &a, &b);\n  printf(\"%d\\n\", a + b);\n  return 0;\n}\n"
-}
-```
+**Request (form-data):**
+- `exercise_id`: entero
+- `code_file`: archivo `.c` o `.zip`
+
+Regla por ejercicio:
+- Cada ejercicio define `expected_submission_type` (`c_file` o `zip_makefile`).
+- Si se envia un formato distinto al esperado, la API devuelve `400`.
+
+Reglas para `.zip`:
+- Debe incluir `Makefile` o `makefile` en la raiz del zip.
+- El worker compila con `make` y ejecuta el binario generado contra los test cases.
 
 **Response (200):**
 ```json
@@ -426,7 +487,8 @@ Content-Type: application/json
 ```
 
 **Errores:**
-- `400` - Código vacío o exercise_id inválido
+- `400` - Fichero vacío, formato no soportado o zip inválido
+- `400` - Tipo de entrega no coincide con el ejercicio (por ejemplo, ejercicio `.c` recibiendo `.zip`)
 - `404` - Ejercicio no encontrado
 
 **Nota:** El cliente debe hacer polling a `GET /jobs/{job_id}` para obtener resultados
@@ -536,6 +598,27 @@ GET /jobs/1
 
 ---
 
+### 8.b GET `/teacher/submissions` - Listar entregas (solo profesor)
+
+Permite al profesor listar entregas por asignatura, con filtros por ejercicio y alumno.
+
+**Query params:**
+- `subject_id` (obligatorio)
+- `exercise_id` (opcional)
+- `user_id` (opcional)
+- `user_query` (opcional, busca en username/email)
+- `limit` (opcional, max 500)
+
+### 8.c GET `/teacher/submissions/{job_id}/download` - Descargar código original (solo profesor)
+
+Devuelve el archivo original enviado por el alumno:
+- `.c` para entregas de un archivo
+- `.zip` para proyectos multiarchivo con Makefile
+
+El nombre de descarga se genera automaticamente con ejercicio + alumno + job id.
+
+---
+
 ## Endpoints de Usuario Autenticado
 
 ### 9. GET `/me` - Obtener perfil actual con ranking
@@ -550,12 +633,15 @@ Authorization: Bearer <token>
 {
   "id": 3,
   "username": "alumno_a_base",
+  "display_name": "Nom Cognom",
   "email": "alumno_a_base@example.com",
   "role": "student",
   "leaderboard_rank": 1,
   "completed_exercises": 2
 }
 ```
+
+`display_name` es opcional y, en lanzamientos LTI, intenta exponer el nombre legible recibido desde Atenea.
 
 ---
 
@@ -588,6 +674,30 @@ Authorization: Bearer <token>
     }
   ]
 }
+```
+
+---
+
+### 10.b GET `/me/topic-retroaccions` - Retroaccio desbloquejada por tema
+
+Devuelve la retroaccio desbloquejada por el usuario en la asignatura indicada.
+
+**Query params:**
+- `subject_id` (opcional, recomendado para filtrar por asignatura activa)
+
+La respuesta incluye `newly_unlocked=true` cuando el desbloqueo ocurre por primera vez.
+
+**Response (200):**
+```json
+[
+  {
+    "topic_id": 1,
+    "topic_name": "Punteros",
+    "retroaccio": "Molt bona feina: has assolit els minims del tema.",
+    "created_at": "2026-09-05T10:30:00",
+    "newly_unlocked": false
+  }
+]
 ```
 
 ---
@@ -659,23 +769,12 @@ Authorization: Bearer <token>
 
 ## Flujo de Uso Típico para Game Client
 
-### Juego quiere registrar un jugador:
+### Juego/LMS quiere autenticar un jugador:
 
 ```bash
-# 1. Registrar
-curl -X POST http://localhost:8000/users \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "jugador_nuevo",
-    "email": "jugador@game.com",
-    "password": "secret_game_pass"
-  }'
-
-# 2. Login
-curl -X POST http://localhost:8000/token \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=jugador_nuevo&password=secret_game_pass"
-# Guardar token
+# 1. Atenea realiza POST firmado a /lti/launch
+# 2. Jutge devuelve JWT interno
+# 3. Cliente usa ese JWT como Bearer token
 ```
 
 ### Juego quiere que el jugador explore ejercicios:

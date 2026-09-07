@@ -1,0 +1,10 @@
+[
+  {
+    "title": "Sumador basic",
+    "description": "Llegeix dos enters i imprimeix la seva suma.",
+    "level": "basic",
+    "expected_submission_type": "c_file",
+    "is_required": true,
+    "topic_name": "Administracio de sistemes operatius"
+  }
+]

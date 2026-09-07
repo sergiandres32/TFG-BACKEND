@@ -68,12 +68,15 @@ def run_executable(exec_path: str, input_data: str, timeout: int = 5) -> Dict[st
             stderr = proc.stderr.decode('utf-8', errors='replace') if isinstance(proc.stderr, (bytes, bytearray)) else str(proc.stderr)
         except Exception:
             stderr = ''
+        # En entornos con limites de memoria, el proceso puede morir con -9/137
+        # sin lanzar excepcion de Python. Lo marcamos como posible OOM.
+        oom_killed = proc.returncode in (-9, 137)
         return {
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": proc.returncode,
             "timed_out": False,
-            "oom_killed": False,
+            "oom_killed": oom_killed,
             "time": duration,
         }
     except subprocess.TimeoutExpired as e:

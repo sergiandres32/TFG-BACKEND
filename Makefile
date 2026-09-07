@@ -1,12 +1,6 @@
 COMPOSE_FILE := docker-compose-api.yml
 COMPOSE := docker-compose
 PYTHON := python3
-STREAMLIT_ADMIN_PID_FILE := .streamlit_admin.pid
-STREAMLIT_ADMIN_LOG_FILE := .streamlit_admin.log
-STREAMLIT_STUDENT_PID_FILE := .streamlit_student.pid
-STREAMLIT_STUDENT_LOG_FILE := .streamlit_student.log
-STREAMLIT_SUBJECTS_PID_FILE := .streamlit_subjects.pid
-STREAMLIT_SUBJECTS_LOG_FILE := .streamlit_subjects.log
 POSTMAN_ENV := dev-tools/postman/jutge_e2e.local.postman_environment.json
 NEWMAN_IMAGE := postman/newman:alpine
 NEWMAN_DOCKER := docker run --rm --network host -v $(PWD):$(PWD) -w $(PWD) $(NEWMAN_IMAGE)
@@ -18,8 +12,8 @@ PLAYWRIGHT_DOCKER := docker run --rm --network host -u $(shell id -u):$(shell id
 
 help:
 	@echo "Comandos disponibles:"
-	@echo "  make stack-up         # Levanta API + worker + DB y arranca Streamlit admin + student + subjects en background"
-	@echo "  make stack-down       # Apaga stack Docker y detiene Streamlit admin + student + subjects en background"
+	@echo "  make stack-up         # Levanta API + worker + DB + Streamlit admin + student + subjects en Docker"
+	@echo "  make stack-down       # Apaga stack Docker completo"
 	@echo "  make stack-logs       # Muestra logs en tiempo real del stack"
 	@echo "  make db-clean         # Limpia DB (drop/create tablas)"
 	@echo "  make db-seed          # Carga profesor + ejercicios + test cases"
@@ -60,45 +54,9 @@ help:
 
 stack-up:
 	$(COMPOSE) -f $(COMPOSE_FILE) up -d --build
-	@if [ -f $(STREAMLIT_ADMIN_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_ADMIN_PID_FILE)) 2>/dev/null; then \
-		echo "Streamlit admin ya esta en ejecucion (PID $$(cat $(STREAMLIT_ADMIN_PID_FILE)))."; \
-	else \
-		nohup $(PYTHON) -m streamlit run admin_streamlit.py --server.port 8501 > $(STREAMLIT_ADMIN_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_ADMIN_PID_FILE); \
-		echo "Streamlit admin lanzado en background (PID $$(cat $(STREAMLIT_ADMIN_PID_FILE)))."; \
-		echo "Logs: tail -f $(STREAMLIT_ADMIN_LOG_FILE)"; \
-	fi
-	@if [ -f $(STREAMLIT_STUDENT_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_STUDENT_PID_FILE)) 2>/dev/null; then \
-		echo "Streamlit student ya esta en ejecucion (PID $$(cat $(STREAMLIT_STUDENT_PID_FILE)))."; \
-	else \
-		nohup $(PYTHON) -m streamlit run student_streamlit.py --server.port 8502 > $(STREAMLIT_STUDENT_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_STUDENT_PID_FILE); \
-		echo "Streamlit student lanzado en background (PID $$(cat $(STREAMLIT_STUDENT_PID_FILE)))."; \
-		echo "Logs: tail -f $(STREAMLIT_STUDENT_LOG_FILE)"; \
-	fi
-	@if [ -f $(STREAMLIT_SUBJECTS_PID_FILE) ] && kill -0 $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)) 2>/dev/null; then \
-		echo "Streamlit subjects ya esta en ejecucion (PID $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)))."; \
-	else \
-		nohup $(PYTHON) -m streamlit run subjects_streamlit.py --server.port 8503 > $(STREAMLIT_SUBJECTS_LOG_FILE) 2>&1 & echo $$! > $(STREAMLIT_SUBJECTS_PID_FILE); \
-		echo "Streamlit subjects lanzado en background (PID $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)))."; \
-		echo "Logs: tail -f $(STREAMLIT_SUBJECTS_LOG_FILE)"; \
-	fi
 
 stack-down:
 	$(COMPOSE) -f $(COMPOSE_FILE) down
-	@if [ -f $(STREAMLIT_ADMIN_PID_FILE) ]; then \
-		kill $$(cat $(STREAMLIT_ADMIN_PID_FILE)) 2>/dev/null || true; \
-		rm -f $(STREAMLIT_ADMIN_PID_FILE); \
-		echo "Streamlit admin detenido."; \
-	fi
-	@if [ -f $(STREAMLIT_STUDENT_PID_FILE) ]; then \
-		kill $$(cat $(STREAMLIT_STUDENT_PID_FILE)) 2>/dev/null || true; \
-		rm -f $(STREAMLIT_STUDENT_PID_FILE); \
-		echo "Streamlit student detenido."; \
-	fi
-	@if [ -f $(STREAMLIT_SUBJECTS_PID_FILE) ]; then \
-		kill $$(cat $(STREAMLIT_SUBJECTS_PID_FILE)) 2>/dev/null || true; \
-		rm -f $(STREAMLIT_SUBJECTS_PID_FILE); \
-		echo "Streamlit subjects detenido."; \
-	fi
 
 stack-logs:
 	$(COMPOSE) -f $(COMPOSE_FILE) logs -f

@@ -5,7 +5,7 @@ An automated grading system for C programming exercises with strict evaluation, 
 ## Quick Start
 
 ```bash
-# 1) Levanta API + PostgreSQL + Worker + Streamlit + nginx proxy en background
+# 1) Levanta API + PostgreSQL + Worker + Streamlit admin + student en background
 make stack-up
 
 # 2) En otra terminal: reinicia DB y carga datos seed (profesor, alumnos, topics, ejercicios, test cases)
@@ -14,29 +14,80 @@ make db-reset-seed
 # 3) API docs (Swagger)
 http://localhost:8000/docs
 
-# 4) Front publico a traves de nginx (ruta real de acceso)
-http://localhost:8080/admin/
-http://localhost:8080/student/
-http://localhost:8080/subjects/
+# 4) Panel admin Streamlit (profesor)
+http://localhost:8501
 
-# 5) Suite E2E API completa (Newman en Docker)
+# 5) Panel student Streamlit (alumno)
+http://localhost:8502
+
+# 6) Suite E2E API completa (Newman en Docker)
 make newman-docker-all
 ```
 
 Resumen rapido de comandos:
 
-- make stack-up: arranca el stack Docker con API, worker, DB, Streamlit y proxy nginx en puerto 8080.
+- make stack-up: arranca el stack Docker completo (API, PostgreSQL, worker, Streamlit admin, student y subjects).
 - make db-reset-seed: limpia y vuelve a sembrar la base de datos para empezar desde estado conocido.
 - make newman-docker-all: ejecuta contratos + errores + flujo E2E multi-actor usando colecciones Postman.
 
-### Rutas reales de acceso
+## Funcionamiento con Atenea sin deploy
 
-- API: `http://localhost:8000/docs`
-- Admin: `http://localhost:8080/admin/`
-- Student: `http://localhost:8080/student/`
-- Subjects: `http://localhost:8080/subjects/`
+Este flujo permite probar LTI con Atenea desde tu maquina local, sin desplegar en servidor.
 
-> No es recomendable abrir directamente `http://localhost:8501`, `http://localhost:8502` o `http://localhost:8503` salvo debugging local; la ruta publica real pasa por nginx.
+1. Levanta el stack local:
+
+```bash
+make stack-up
+make db-reset-seed
+```
+
+2. Expone una URL publica HTTPS con ngrok:
+
+```bash
+ngrok http 8080 --region eu
+```
+
+Si no usas router/nginx unico, usa dos tuneles:
+
+```bash
+ngrok http 8000 --region eu
+ngrok http 8502 --region eu
+```
+
+3. Configura `.env` con la URL publica de la UI student:
+
+```env
+LTI_UI_BASE_URL=https://TU-URL-PUBLICA-UI/student
+```
+
+4. Reinicia stack si cambias `.env`:
+
+```bash
+make stack-down
+make stack-up
+```
+
+5. En Atenea (herramienta externa):
+- Launch URL: `https://TU-URL-PUBLICA-API/lti/launch`
+- Consumer key: la misma configurada en Jutge
+- Shared secret: la misma configurada en Jutge
+
+6. Valida el launch tecnico:
+
+```bash
+python3 dev-tools/test_lti_launch_flow.py \
+	--base-url https://TU-URL-PUBLICA \
+	--platform-name atenea-upc \
+	--consumer-key jutge-key \
+	--consumer-secret jutge-secret
+```
+
+Regla rapida:
+- Sin Atenea (solo pruebas locales): no hace falta ngrok.
+- Con Atenea real: ngrok es obligatorio para exponer una URL publica.
+
+Guia completa paso a paso:
+- [ATENEA LTI RUNBOOK](docs/ATENEA_LTI_RUNBOOK.md)
 
 ## Project Structure
 
@@ -93,17 +144,6 @@ For detailed guides, see the `docs/` folder:
 - [Database Monitoring with DBeaver](docs/DBEAVER_SETUP.md)
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
 - [Development Notes](docs/DEVELOPMENT.md)
-
-## Public routing / nginx proxy
-
-La capa publica del sistema usa nginx en el puerto `8080` para enrutar cada frontend y la API:
-
-- `/admin/` -> `streamlit_admin` (`8501`)
-- `/student/` -> `streamlit_student` (`8502`)
-- `/subjects/` -> `streamlit_subjects` (`8503`)
-- `/` -> API FastAPI (`8000`)
-
-Esto es lo que usa la integracion LTI/Atenea con una URL publica unica y estable.
 
 ## Teacher Admin Panel (Streamlit)
 

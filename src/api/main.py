@@ -1,13 +1,24 @@
-from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, Form
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, Form, Request
+from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
-from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema
+from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema
 from .security import create_access_token, get_current_user, require_teacher, require_student
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import time
+import urllib.parse
 
 Base.metadata.create_all(bind=engine)
 ensure_phase1_schema(engine)
 ensure_phase2_multi_subject_schema(engine)
+ensure_phase3_lti_schema(engine)
+ensure_phase4_topic_secret_schema(engine)
+ensure_phase5_exercise_submission_type_schema(engine)
 
 app = FastAPI(
     title="Jutge Mini API",
@@ -36,8 +47,8 @@ LEADERBOARD_EXAMPLE = [
 ]
 
 EXERCISES_LIST_EXAMPLE = [
-    {"id": 1, "title": "sum", "description": "Sum two integers", "level": "beginner", "is_required": False, "completed": True},
-    {"id": 2, "title": "sort_words", "description": "Sort words alphabetically", "level": "mid", "is_required": False, "completed": False},
+    {"id": 1, "title": "sum", "description": "Sum two integers", "level": "beginner", "expected_submission_type": "c_file", "is_required": False, "completed": True},
+    {"id": 2, "title": "sort_words", "description": "Sort words alphabetically", "level": "mid", "expected_submission_type": "zip_makefile", "is_required": False, "completed": False},
 ]
 
 SUBMISSION_CREATED_EXAMPLE = {
@@ -87,6 +98,32 @@ JOB_WA_EXAMPLE = {
     "completed_at": "2026-03-12T15:35:12.765432",
 }
 
+SUBMISSION_V2_PREFIX = "__JUTGE_SUBMISSION_V2__:"
+
+
+def _slugify_filename_fragment(raw: str, max_len: int = 48) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", (raw or "").strip()).strip("_").lower()
+    if not cleaned:
+        cleaned = "item"
+    return cleaned[:max_len]
+
+
+def _decode_submission_payload_for_download(job_code: str) -> tuple[bytes, str, str]:
+    if not (job_code or "").startswith(SUBMISSION_V2_PREFIX):
+        return (job_code or "").encode("utf-8"), "text/x-c", ".c"
+
+    payload_json = (job_code or "")[len(SUBMISSION_V2_PREFIX):]
+    payload = json.loads(payload_json)
+    payload_format = str(payload.get("format") or "")
+    if payload_format == "zip_makefile":
+        zip_b64 = payload.get("zip_b64")
+        if not isinstance(zip_b64, str) or not zip_b64:
+            raise ValueError("Invalid zip payload")
+        zip_bytes = base64.b64decode(zip_b64)
+        return zip_bytes, "application/zip", ".zip"
+
+    raise ValueError("Unsupported submission format")
+
 
 def _resolve_user_subject_scope(db: Session, user_id: int, subject_id: int | None = None) -> list[int]:
     enrolled_subject_ids = crud.get_enrolled_subject_ids_for_user(db, user_id)
@@ -97,6 +134,210 @@ def _resolve_user_subject_scope(db: Session, user_id: int, subject_id: int | Non
     if subject_id not in enrolled_subject_ids:
         raise HTTPException(status_code=403, detail="Not enrolled in subject")
     return [subject_id]
+
+
+def _is_lti_instructor(roles: str) -> bool:
+    normalized = (roles or "").lower()
+    return "instructor" in normalized or "teacher" in normalized
+
+
+def _resolve_lti_display_name(post_data: dict[str, str], lti_user_id: str) -> str:
+    full_name = (post_data.get("lis_person_name_full") or "").strip()
+    if full_name:
+        return full_name
+
+    given_name = (post_data.get("lis_person_name_given") or "").strip()
+    family_name = (post_data.get("lis_person_name_family") or "").strip()
+    combined_name = " ".join(part for part in [given_name, family_name] if part).strip()
+    if combined_name:
+        return combined_name
+
+    ext_username = (post_data.get("ext_user_username") or "").strip()
+    if ext_username:
+        return ext_username
+
+    return lti_user_id
+
+
+def _resolve_lti_target(post_data: dict[str, str]) -> str:
+    # In LTI 1.1 custom params are usually sent as custom_<name>.
+    # Keep a permissive fallback to target for local/manual launch tests.
+    return (post_data.get("custom_target") or post_data.get("target") or "").strip().lower()
+
+
+def _resolve_lti_exercise_id(post_data: dict[str, str]) -> int | None:
+    raw_value = (post_data.get("custom_exercise_id") or post_data.get("exercise_id") or "").strip()
+    if not raw_value:
+        target_value = (post_data.get("custom_target") or post_data.get("target") or "").strip().lower()
+        match = re.fullmatch(r"exercise[:=\-](\d+)", target_value)
+        if not match:
+            return None
+        raw_value = match.group(1)
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _resolve_ui_base_with_target(
+    *,
+    default_ui_base: str,
+    target: str,
+    is_instructor: bool,
+    request: Request,
+) -> tuple[str, str | None]:
+    # Optional LTI deep-link target shortcuts.
+    # - subjects  -> subjects portal
+    # - admin     -> admin dashboard
+    # - exercises -> admin dashboard preselected in exercises section
+    target_aliases = {
+        "subjects": "subjects",
+        "subjects_portal": "subjects",
+        "materies": "subjects",
+        "materias": "subjects",
+        "admin": "admin",
+        "dashboard": "admin",
+        "tauler": "admin",
+        "exercises": "exercises",
+        "exercise": "exercises",
+        "exercicis": "exercises",
+    }
+    target_key = target_aliases.get(target or "")
+
+    query_target = None
+    role_path = "/admin" if is_instructor else "/student"
+
+    if target_key == "subjects":
+        role_path = "/subjects"
+    elif target_key == "admin" and is_instructor:
+        role_path = "/admin"
+    elif target_key == "exercises" and is_instructor:
+        role_path = "/admin"
+        query_target = "exercises"
+
+    if is_instructor and target_key == "exercise":
+        role_path = "/admin"
+        query_target = "proves"
+
+    if default_ui_base:
+        if target_key in {"subjects", "admin", "exercises"}:
+            forwarded_host = (request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or "").strip()
+            forwarded_proto = (request.headers.get("X-Forwarded-Proto") or request.url.scheme or "https").strip()
+            if (
+                forwarded_host
+                and not forwarded_host.startswith("localhost")
+                and not forwarded_host.startswith("127.0.0.1")
+            ):
+                return f"{forwarded_proto}://{forwarded_host}{role_path}", query_target
+        return default_ui_base, query_target
+
+    forwarded_host = (request.headers.get("X-Forwarded-Host") or request.headers.get("Host") or "").strip()
+    forwarded_proto = (request.headers.get("X-Forwarded-Proto") or request.url.scheme or "https").strip()
+    if (
+        forwarded_host
+        and not forwarded_host.startswith("localhost")
+        and not forwarded_host.startswith("127.0.0.1")
+    ):
+        return f"{forwarded_proto}://{forwarded_host}{role_path}", query_target
+
+    return "", query_target
+
+
+def _oauth_normalize_params(params: dict[str, str]) -> str:
+    # OAuth 1.0 signature is calculated over all params except oauth_signature.
+    filtered = {k: v for k, v in params.items() if k != "oauth_signature"}
+    encoded_pairs = []
+    for key in sorted(filtered.keys()):
+        value = filtered.get(key, "")
+        encoded_pairs.append(
+            f"{urllib.parse.quote(str(key), safe='~')}={urllib.parse.quote(str(value), safe='~')}"
+        )
+    return "&".join(encoded_pairs)
+
+
+def _compute_oauth_signature(post_data: dict[str, str], http_method: str, base_url: str, consumer_secret: str) -> str:
+    normalized_params = _oauth_normalize_params(post_data)
+    base_elems = [
+        http_method.upper(),
+        urllib.parse.quote(base_url, safe='~'),
+        urllib.parse.quote(normalized_params, safe='~'),
+    ]
+    base_string = "&".join(base_elems)
+    signing_key = f"{urllib.parse.quote(consumer_secret, safe='~')}&"
+    digest = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
+    return base64.b64encode(digest).decode()
+
+
+def _validate_lti_oauth_11(request: Request, post_data: dict[str, str], consumer_secret: str) -> tuple[bool, str]:
+    required = [
+        "oauth_consumer_key",
+        "oauth_signature_method",
+        "oauth_timestamp",
+        "oauth_nonce",
+        "oauth_signature",
+    ]
+    for key in required:
+        if not post_data.get(key):
+            return False, f"Missing {key}"
+
+    if str(post_data.get("oauth_signature_method", "")).upper() != "HMAC-SHA1":
+        return False, "Unsupported oauth_signature_method"
+
+    try:
+        ts = int(str(post_data.get("oauth_timestamp", "0")))
+    except ValueError:
+        return False, "Invalid oauth_timestamp"
+    now_ts = int(time.time())
+    if abs(now_ts - ts) > 3600:
+        return False, "oauth_timestamp outside allowed window"
+
+    proto = request.headers.get("X-Forwarded-Proto", request.url.scheme)
+    host = request.headers.get("Host", request.url.hostname)
+    prefix = request.headers.get("X-Forwarded-Prefix", "")
+    base_url = f"{proto}://{host}{prefix}{request.url.path}"
+
+    computed = _compute_oauth_signature(post_data, "POST", base_url, consumer_secret)
+    received = str(post_data.get("oauth_signature", ""))
+    if not hmac.compare_digest(computed, received):
+        return False, "Invalid oauth_signature"
+
+    return True, "ok"
+
+
+def _bootstrap_lti_platform_if_configured(db: Session, consumer_key: str) -> tuple[models.LtiPlatform | None, str]:
+    bootstrap_key = os.environ.get("LTI_BOOTSTRAP_CONSUMER_KEY", "").strip()
+    bootstrap_secret = os.environ.get("LTI_BOOTSTRAP_CONSUMER_SECRET", "").strip()
+    bootstrap_name = os.environ.get("LTI_BOOTSTRAP_PLATFORM_NAME", "atenea-upc").strip() or "atenea-upc"
+
+    if not consumer_key or not bootstrap_key or not bootstrap_secret:
+        return None, "bootstrap_not_configured"
+    if consumer_key != bootstrap_key:
+        return None, "bootstrap_key_mismatch"
+
+    existing = (
+        db.query(models.LtiPlatform)
+        .filter(models.LtiPlatform.consumer_key == consumer_key)
+        .first()
+    )
+    if existing:
+        existing.consumer_secret = bootstrap_secret
+        existing.is_active = True
+        if bootstrap_name:
+            existing.name = bootstrap_name
+        db.commit()
+        db.refresh(existing)
+        return existing, "bootstrap_updated_existing"
+
+    payload = schemas.LtiPlatformCreate(
+        name=bootstrap_name,
+        consumer_key=bootstrap_key,
+        consumer_secret=bootstrap_secret,
+        is_active=True,
+    )
+    created = crud.upsert_lti_platform(db, payload)
+    if not created:
+        return None, "bootstrap_create_failed"
+    return created, "bootstrap_created"
 
 ME_SUBMISSIONS_EXAMPLE = [
     {
@@ -123,11 +364,18 @@ ME_SUBMISSIONS_EXAMPLE = [
 
 @app.post(
     "/users",
-    response_model=schemas.UserOut,
-    summary="Registrar usuario",
+    summary="Registro local deshabilitado",
     responses={
-        200: {"description": "Usuario registrado"},
-        400: {"description": "Username o email ya registrado", "content": {"application/json": {"example": {"detail": "Username or email already registered"}}}},
+        410: {
+            "description": "Registro deshabilitado",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Local user registration is disabled. Access must be provisioned through Atenea LTI."
+                    }
+                }
+            },
+        },
     },
 )
 def register(
@@ -142,10 +390,10 @@ def register(
     ),
     db: Session = Depends(get_db),
 ):
-    db_user = crud.create_user(db, user)
-    if db_user is None:
-        raise HTTPException(status_code=400, detail="Username or email already registered")
-    return db_user
+    raise HTTPException(
+        status_code=410,
+        detail="Local user registration is disabled. Access must be provisioned through Atenea LTI.",
+    )
 
 
 @app.get(
@@ -238,7 +486,12 @@ def enroll_subject(subject_id: int, payload: schemas.SubjectEnrollRequest, curre
     summary="Asignar profesor autenticado a una asignatura",
 )
 def assign_teacher_subject(subject_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
-    _, status = crud.assign_user_to_subject(db, user_id=current.id, subject_id=subject_id)
+    _, status = crud.assign_user_to_subject(
+        db,
+        user_id=current.id,
+        subject_id=subject_id,
+        role_in_subject=models.RoleEnum.teacher,
+    )
     if status == "subject_not_found":
         raise HTTPException(status_code=404, detail="Subject not found")
     if status == "already_assigned":
@@ -301,30 +554,224 @@ def update_subject_password(subject_id: int, payload: schemas.SubjectPasswordUpd
 
 
 @app.post(
+    "/lti/platforms",
+    response_model=schemas.LtiPlatformOut,
+    summary="Crear o actualizar configuracion de plataforma LTI (solo profesor)",
+)
+def upsert_lti_platform(payload: schemas.LtiPlatformCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    if not payload.name.strip() or not payload.consumer_key.strip() or not payload.consumer_secret.strip():
+        raise HTTPException(status_code=400, detail="name, consumer_key and consumer_secret are required")
+    platform = crud.upsert_lti_platform(db, payload)
+    if not platform:
+        raise HTTPException(status_code=400, detail="Could not create/update LTI platform")
+    return platform
+
+
+@app.get(
+    "/lti/platforms",
+    response_model=list[schemas.LtiPlatformOut],
+    summary="Listar plataformas LTI configuradas (solo profesor)",
+)
+def list_lti_platforms(current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    return crud.list_lti_platforms(db)
+
+
+@app.post(
+    "/lti/launch",
+    response_model=schemas.LtiLaunchResponse,
+    summary="Launch LTI 1.1 desde LMS (Atenea/Moodle)",
+)
+async def lti_launch(request: Request, db: Session = Depends(get_db)):
+    form_data = await request.form()
+    post_data = {key: str(form_data.get(key) or "") for key in form_data.keys()}
+
+    consumer_key = post_data.get("oauth_consumer_key", "").strip()
+    platform = crud.get_active_lti_platform_by_consumer_key(db, consumer_key)
+    bootstrap_status = "not_attempted"
+    if not platform:
+        platform, bootstrap_status = _bootstrap_lti_platform_if_configured(db, consumer_key)
+    if not platform:
+        crud.create_lti_launch_event(
+            db,
+            platform_id=None,
+            lti_user_id=post_data.get("user_id"),
+            context_id=post_data.get("context_id"),
+            resource_link_id=post_data.get("resource_link_id"),
+            roles=post_data.get("roles"),
+            user_id=None,
+            subject_id=None,
+            outcome="invalid_consumer_key",
+            details={
+                "consumer_key": consumer_key,
+                "bootstrap_status": bootstrap_status,
+            },
+        )
+        raise HTTPException(status_code=401, detail="Invalid oauth_consumer_key")
+
+    is_valid, reason = _validate_lti_oauth_11(request, post_data, platform.consumer_secret)
+    if not is_valid:
+        crud.create_lti_launch_event(
+            db,
+            platform_id=platform.id,
+            lti_user_id=post_data.get("user_id"),
+            context_id=post_data.get("context_id"),
+            resource_link_id=post_data.get("resource_link_id"),
+            roles=post_data.get("roles"),
+            user_id=None,
+            subject_id=None,
+            outcome="invalid_signature",
+            details={"reason": reason},
+        )
+        raise HTTPException(status_code=401, detail=reason)
+
+    lti_user_id = post_data.get("user_id", "").strip()
+    context_id = post_data.get("context_id", "").strip()
+    if not lti_user_id:
+        raise HTTPException(status_code=400, detail="Missing user_id")
+    if not context_id:
+        raise HTTPException(status_code=400, detail="Missing context_id")
+
+    roles = post_data.get("roles", "")
+    is_instructor = _is_lti_instructor(roles)
+    display_name = _resolve_lti_display_name(post_data, lti_user_id)
+    email = post_data.get("lis_person_contact_email_primary") or None
+
+    user = crud.resolve_or_create_lti_user(
+        db,
+        platform=platform,
+        lti_user_id=lti_user_id,
+        display_name=display_name,
+        email=email,
+        is_instructor=is_instructor,
+    )
+
+    subject, _, mapping_status = crud.resolve_or_create_subject_for_lti_context(
+        db,
+        platform=platform,
+        context_id=context_id,
+        context_title=post_data.get("context_title") or None,
+        allow_auto_create=is_instructor,
+    )
+    if not subject:
+        crud.create_lti_launch_event(
+            db,
+            platform_id=platform.id,
+            lti_user_id=lti_user_id,
+            context_id=context_id,
+            resource_link_id=post_data.get("resource_link_id"),
+            roles=roles,
+            user_id=user.id,
+            subject_id=None,
+            outcome="missing_context_mapping",
+            details={"mapping_status": mapping_status},
+        )
+        raise HTTPException(status_code=403, detail="Context not mapped to subject")
+
+    role_in_subject = models.RoleEnum.teacher if is_instructor else models.RoleEnum.student
+    enrollment = crud.upsert_user_subject_enrollment_role(
+        db,
+        user_id=user.id,
+        subject_id=subject.id,
+        role_in_subject=role_in_subject,
+    )
+
+    token = create_access_token({"sub": user.username})
+    crud.create_lti_launch_event(
+        db,
+        platform_id=platform.id,
+        lti_user_id=lti_user_id,
+        context_id=context_id,
+        resource_link_id=post_data.get("resource_link_id"),
+        roles=roles,
+        user_id=user.id,
+        subject_id=subject.id,
+        outcome="ok",
+        details={
+            "mapping_status": mapping_status,
+            "display_name": display_name,
+        },
+    )
+
+    user_role = user.role.value if hasattr(user.role, "value") else str(user.role)
+    enrollment_role = (
+        enrollment.role_in_subject.value
+        if hasattr(enrollment.role_in_subject, "value")
+        else str(enrollment.role_in_subject)
+    )
+
+    lti_target = _resolve_lti_target(post_data)
+    lti_exercise_id = _resolve_lti_exercise_id(post_data)
+
+    # Redirect UI by role with query token.
+    # Priority:
+    # - instructor -> LTI_UI_BASE_URL_TEACHER
+    # - student    -> LTI_UI_BASE_URL_STUDENT
+    # - fallback   -> LTI_UI_BASE_URL (legacy)
+    default_ui_base = ""
+    if is_instructor:
+        default_ui_base = os.environ.get("LTI_UI_BASE_URL_TEACHER", "").strip()
+    else:
+        default_ui_base = os.environ.get("LTI_UI_BASE_URL_STUDENT", "").strip()
+    if not default_ui_base:
+        default_ui_base = os.environ.get("LTI_UI_BASE_URL", "").strip()
+
+    ui_base, query_target = _resolve_ui_base_with_target(
+        default_ui_base=default_ui_base,
+        target=lti_target,
+        is_instructor=is_instructor,
+        request=request,
+    )
+
+    if lti_exercise_id is not None:
+        query_target = "alumnat" if is_instructor else None
+
+    # If not set, fall back to JSON (useful for local testing / Swagger).
+    if ui_base:
+        # Keep Streamlit path canonical (/student/) to avoid proxy slash-redirects
+        # that can leak internal ports (e.g. :8080) in external clients.
+        if "?" not in ui_base and not ui_base.endswith("/"):
+            ui_base = f"{ui_base}/"
+        separator = "&" if "?" in ui_base else "?"
+        redirect_url = f"{ui_base}{separator}token={token}&subject_id={subject.id}"
+        if query_target:
+            redirect_url = f"{redirect_url}&target={urllib.parse.quote(query_target, safe='')}"
+        if lti_exercise_id is not None:
+            redirect_url = f"{redirect_url}&exercise_id={urllib.parse.quote(str(lti_exercise_id), safe='')}"
+        return RedirectResponse(url=redirect_url, status_code=303)
+
+    # Fallback: return JSON (local dev / test scripts)
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user_id": user.id,
+        "username": user.username,
+        "role": user_role,
+        "subject_id": subject.id,
+        "role_in_subject": enrollment_role,
+    }
+
+
+@app.post(
     "/token",
-    response_model=schemas.Token,
-    summary="Login y obtención de JWT",
-    openapi_extra={
-        "requestBody": {
-            "required": True,
+    summary="Login local deshabilitado",
+    responses={
+        410: {
+            "description": "Login local deshabilitado",
             "content": {
-                "application/x-www-form-urlencoded": {
-                    "example": {"username": "alumno_a_base", "password": "alumno123"}
+                "application/json": {
+                    "example": {
+                        "detail": "Local password login is disabled. Access through Atenea LTI launch."
+                    }
                 }
             },
-        }
-    },
-    responses={
-        200: {"description": "Token generado"},
-        400: {"description": "Credenciales incorrectas", "content": {"application/json": {"example": {"detail": "Incorrect username or password"}}}},
+        },
     },
 )
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = crud.authenticate_user(db, form_data.username, form_data.password)
-    if not user:
-        raise HTTPException(status_code=400, detail="Incorrect username or password")
-    token = create_access_token({"sub": user.username})
-    return {"access_token": token, "token_type": "bearer"}
+def login_disabled():
+    raise HTTPException(
+        status_code=410,
+        detail="Local password login is disabled. Access through Atenea LTI launch.",
+    )
 
 
 @app.post(
@@ -341,8 +788,8 @@ def create_exercise(ex: schemas.ExerciseCreate, current: models.User = Depends(r
     topic = crud.get_topic_by_id(db, ex.topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
     e = crud.create_exercise(db, ex, creator_id=current.id)
     return {"id": e.id, "title": e.title}
 
@@ -372,8 +819,8 @@ def create_quiz_question(payload: schemas.QuizQuestionCreate, current: models.Us
     topic = crud.get_topic_by_id(db, payload.topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     return crud.create_quiz_question(db, payload, creator_id=current.id)
 
@@ -397,8 +844,8 @@ def update_quiz_question(question_id: int, payload: schemas.QuizQuestionUpdate, 
     topic_subject_id = crud.get_topic_subject_id(db, int(question.topic_id))
     if topic_subject_id is None:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, topic_subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, topic_subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     updated = crud.update_quiz_question(db, question_id, payload)
     if not updated:
@@ -417,8 +864,8 @@ def delete_quiz_question(question_id: int, current: models.User = Depends(requir
     topic_subject_id = crud.get_topic_subject_id(db, int(question.topic_id))
     if topic_subject_id is None:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, topic_subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, topic_subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     deleted = crud.delete_quiz_question(db, question_id)
     if not deleted:
@@ -468,15 +915,15 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
     current_subject_id = crud.get_exercise_subject_id(db, exercise_id)
     if current_subject_id is None:
         raise HTTPException(status_code=404, detail="Exercise topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, current_subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, current_subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     if ex.topic_id is not None:
         topic = crud.get_topic_by_id(db, ex.topic_id)
         if not topic:
             raise HTTPException(status_code=400, detail="Topic not found")
-        if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
-            raise HTTPException(status_code=403, detail="Not enrolled in subject")
+        if not crud.is_user_teacher_in_subject(db, current.id, int(topic.subject_id)):
+            raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     updated = crud.update_exercise(db, exercise_id, ex)
     return {
@@ -485,6 +932,11 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
         "title": updated.title,
         "description": updated.description,
         "level": updated.level.value if hasattr(updated.level, "value") else updated.level,
+        "expected_submission_type": (
+            updated.expected_submission_type.value
+            if hasattr(updated.expected_submission_type, "value")
+            else updated.expected_submission_type
+        ),
         "is_required": bool(updated.is_required),
     }
 
@@ -501,8 +953,8 @@ def delete_exercise(exercise_id: int, current: models.User = Depends(require_tea
     current_subject_id = crud.get_exercise_subject_id(db, exercise_id)
     if current_subject_id is None:
         raise HTTPException(status_code=404, detail="Exercise topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, current_subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, current_subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     deleted = crud.delete_exercise(db, exercise_id)
     if not deleted:
@@ -525,8 +977,8 @@ def delete_exercise(exercise_id: int, current: models.User = Depends(require_tea
 def create_topic(topic: schemas.TopicCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
     if not crud.get_subject_by_id(db, topic.subject_id):
         raise HTTPException(status_code=404, detail="Subject not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, topic.subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, topic.subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     db_topic = crud.create_topic(db, topic)
     if db_topic is None:
@@ -557,10 +1009,10 @@ def update_topic(topic_id: int, topic: schemas.TopicUpdate, current: models.User
     existing = crud.get_topic_by_id(db, topic_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(existing.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(existing.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
     if not crud.get_subject_by_id(db, int(topic.subject_id)):
         raise HTTPException(status_code=404, detail="Subject not found")
 
@@ -582,8 +1034,8 @@ def delete_topic(topic_id: int, current: models.User = Depends(require_teacher),
     existing = crud.get_topic_by_id(db, topic_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(existing.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(existing.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     deleted = crud.delete_topic(db, topic_id)
     if not deleted:
@@ -600,8 +1052,8 @@ def get_topic_students_status(topic_id: int, current: models.User = Depends(requ
     topic = crud.get_topic_by_id(db, topic_id)
     if not topic:
         raise HTTPException(status_code=404, detail="Topic not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, int(topic.subject_id)):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, int(topic.subject_id)):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     status_rows = crud.get_topic_students_status(db, topic_id)
     if status_rows is None:
@@ -629,6 +1081,11 @@ def list_exercises(subject_id: int | None = None, current=Depends(get_current_us
             "title": ex.title,
             "description": ex.description,
             "level": ex.level.value if hasattr(ex.level, "value") else ex.level,
+            "expected_submission_type": (
+                ex.expected_submission_type.value
+                if hasattr(ex.expected_submission_type, "value")
+                else ex.expected_submission_type
+            ),
             "is_required": bool(ex.is_required),
             "completed": ex.id in completed_ids,
         }
@@ -661,6 +1118,11 @@ def get_exercise(exercise_id: int, current=Depends(get_current_user), db: Sessio
         "title": exercise.title,
         "description": exercise.description,
         "level": exercise.level.value if hasattr(exercise.level, "value") else exercise.level,
+        "expected_submission_type": (
+            exercise.expected_submission_type.value
+            if hasattr(exercise.expected_submission_type, "value")
+            else exercise.expected_submission_type
+        ),
         "is_required": bool(exercise.is_required),
         "completed": exercise.id in completed_ids,
         "public_test_cases": [
@@ -685,8 +1147,8 @@ def create_test_case(tc: schemas.TestCaseCreate, current: models.User = Depends(
     exercise_subject_id = crud.get_exercise_subject_id(db, tc.exercise_id)
     if exercise_subject_id is None:
         raise HTTPException(status_code=404, detail="Exercise not found")
-    if not crud.is_user_enrolled_in_subject(db, current.id, exercise_subject_id):
-        raise HTTPException(status_code=403, detail="Not enrolled in subject")
+    if not crud.is_user_teacher_in_subject(db, current.id, exercise_subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
 
     t = crud.create_test_case(db, tc)
     return {"id": t.id, "name": t.name}
@@ -704,7 +1166,7 @@ def create_test_case(tc: schemas.TestCaseCreate, current: models.User = Depends(
 async def submit(current=Depends(get_current_user), db: Session = Depends(get_db), exercise_id: int = Form(...), code_file: UploadFile = File(...)):
     """
     Enviar un submission de código (multipart/form-data).
-    - Recibe exercise_id y fichero .c
+    - Recibe exercise_id y fichero .c o .zip (proyecto con Makefile)
     - Crea un Job en status 'pending'
     - Devuelve job_id para que el cliente pueda hacer polling
     - El worker evaluará asincrónica y guardará resultado en DB
@@ -712,21 +1174,62 @@ async def submit(current=Depends(get_current_user), db: Session = Depends(get_db
     if not code_file:
         raise HTTPException(status_code=400, detail="Provide code_file for submission")
 
-    # Leer contenido del fichero
-    code_content = await code_file.read()
-    code_text = code_content.decode('utf-8')
-    
-    if not code_text:
-        raise HTTPException(status_code=400, detail="Code file is empty")
-
     exercise = crud.get_exercise_by_id(db, exercise_id)
     if not exercise:
         raise HTTPException(status_code=404, detail="Exercise not found")
     subject_id = crud.get_exercise_subject_id(db, exercise_id)
     if subject_id is None or not crud.is_user_enrolled_in_subject(db, current.id, subject_id):
         raise HTTPException(status_code=403, detail="Not enrolled in subject")
-    
-    job = crud.create_job(db, current.id, exercise_id, code_text)
+
+    filename = (code_file.filename or "submission.c").strip()
+    lower_filename = filename.lower()
+
+    if not (lower_filename.endswith(".c") or lower_filename.endswith(".zip")):
+        raise HTTPException(status_code=400, detail="Only .c or .zip submissions are supported")
+
+    incoming_submission_type = "zip_makefile" if lower_filename.endswith(".zip") else "c_file"
+    expected_submission_type = (
+        exercise.expected_submission_type.value
+        if hasattr(exercise.expected_submission_type, "value")
+        else str(exercise.expected_submission_type or "c_file")
+    )
+    if incoming_submission_type != expected_submission_type:
+        expected_ext = ".zip" if expected_submission_type == "zip_makefile" else ".c"
+        received_ext = ".zip" if incoming_submission_type == "zip_makefile" else ".c"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"This exercise expects {expected_ext} submissions, "
+                f"but received {received_ext}"
+            ),
+        )
+
+    # Leer contenido del fichero
+    code_content = await code_file.read()
+    if not code_content:
+        raise HTTPException(status_code=400, detail="Code file is empty")
+
+    if lower_filename.endswith(".c"):
+        try:
+            code_text = code_content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="C source must be UTF-8 text")
+        if not code_text.strip():
+            raise HTTPException(status_code=400, detail="Code file is empty")
+        job_code_payload = code_text
+    else:
+        max_zip_bytes = 5 * 1024 * 1024
+        if len(code_content) > max_zip_bytes:
+            raise HTTPException(status_code=400, detail="Zip submission too large (max 5 MB)")
+
+        payload = {
+            "format": "zip_makefile",
+            "filename": filename,
+            "zip_b64": base64.b64encode(code_content).decode("ascii"),
+        }
+        job_code_payload = SUBMISSION_V2_PREFIX + json.dumps(payload, ensure_ascii=False)
+
+    job = crud.create_job(db, current.id, exercise_id, job_code_payload)
     return {"job_id": job.id, "status": "pending", "message": "Submission queued for evaluation"}
 
 
@@ -797,6 +1300,108 @@ def get_job_status(job_id: int, current=Depends(get_current_user), db: Session =
 
 
 @app.get(
+    "/teacher/submissions",
+    summary="Listar entregas por asignatura (solo profesor)",
+)
+def list_teacher_submissions(
+    subject_id: int,
+    exercise_id: int | None = None,
+    user_id: int | None = None,
+    user_query: str | None = None,
+    limit: int = 200,
+    current: models.User = Depends(require_teacher),
+    db: Session = Depends(get_db),
+):
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    if exercise_id is not None:
+        ex_subject_id = crud.get_exercise_subject_id(db, exercise_id)
+        if ex_subject_id is None:
+            raise HTTPException(status_code=404, detail="Exercise not found")
+        if ex_subject_id != subject_id:
+            raise HTTPException(status_code=403, detail="Exercise outside selected subject")
+
+    max_limit = min(max(int(limit), 1), 500)
+    rows = (
+        db.query(models.Job, models.User, models.Exercise, models.Run)
+        .join(models.User, models.User.id == models.Job.user_id)
+        .join(models.Exercise, models.Exercise.id == models.Job.exercise_id)
+        .outerjoin(models.Run, models.Run.id == models.Job.run_id)
+        .order_by(models.Job.id.desc())
+        .limit(max_limit * 3)
+        .all()
+    )
+
+    q = (user_query or "").strip().lower()
+    items = []
+    for job, user, exercise, run in rows:
+        ex_subject_id = crud.get_exercise_subject_id(db, int(job.exercise_id))
+        if ex_subject_id != subject_id:
+            continue
+        if exercise_id is not None and int(job.exercise_id) != int(exercise_id):
+            continue
+        if user_id is not None and int(job.user_id) != int(user_id):
+            continue
+        if q and q not in (user.username or "").lower() and q not in (user.email or "").lower():
+            continue
+
+        items.append(
+            {
+                "job_id": job.id,
+                "user_id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "exercise_id": exercise.id,
+                "exercise_title": exercise.title,
+                "status": job.status.value if hasattr(job.status, "value") else str(job.status),
+                "verdict": (
+                    run.verdict.value if run and hasattr(run.verdict, "value") else (str(run.verdict) if run else None)
+                ),
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            }
+        )
+        if len(items) >= max_limit:
+            break
+
+    return items
+
+
+@app.get(
+    "/teacher/submissions/{job_id}/download",
+    summary="Descargar código original de una entrega (solo profesor)",
+)
+def download_teacher_submission(job_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    subject_id = crud.get_exercise_subject_id(db, int(job.exercise_id))
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    user = db.query(models.User).filter(models.User.id == job.user_id).first()
+    exercise = db.query(models.Exercise).filter(models.Exercise.id == job.exercise_id).first()
+    if not user or not exercise:
+        raise HTTPException(status_code=404, detail="Submission context not found")
+
+    try:
+        content_bytes, media_type, extension = _decode_submission_payload_for_download(job.code or "")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Cannot decode submission payload: {exc}")
+
+    exercise_part = _slugify_filename_fragment(exercise.title or f"exercise_{exercise.id}")
+    user_part = _slugify_filename_fragment((user.email or "").split("@")[0] or user.username)
+    filename = f"{exercise_part}__{user_part}__job{job.id}{extension}"
+
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=content_bytes, media_type=media_type, headers=headers)
+
+
+@app.get(
     "/leaderboard",
     summary="Leaderboard global",
     responses={
@@ -834,10 +1439,12 @@ def leaderboard(current=Depends(get_current_user), db: Session = Depends(get_db)
 def get_current_user_profile(current=Depends(get_current_user), db: Session = Depends(get_db)):
     """Obtener perfil del usuario actual con posición en leaderboard."""
     rank, completed_count = crud.get_user_leaderboard_rank(db, current.id)
+    lti_display_name = crud.get_latest_lti_display_name_for_user(db, current.id)
     
     return {
         "id": current.id,
         "username": current.username,
+        "display_name": lti_display_name,
         "email": current.email,
         "role": current.role.value if hasattr(current.role, "value") else current.role,
         "leaderboard_rank": rank or 0,
@@ -868,3 +1475,13 @@ def get_current_user_submissions(subject_id: int | None = None, current=Depends(
     """Obtener historial de submissions del usuario actual."""
     subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
     return crud.get_user_submissions(db, current.id, subject_ids=subject_ids)
+
+
+@app.get(
+    "/me/topic-retroaccions",
+    response_model=list[schemas.TopicSecretUnlockOut],
+    summary="Retroaccions desbloquejades per tema",
+)
+def get_current_user_topic_retroaccions(subject_id: int | None = None, current=Depends(get_current_user), db: Session = Depends(get_db)):
+    subject_ids = _resolve_user_subject_scope(db, current.id, subject_id)
+    return crud.get_user_topic_secret_unlocks(db, current.id, subject_ids)

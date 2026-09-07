@@ -1,37 +1,25 @@
 import json
 import os
 import urllib.error
-import urllib.parse
 import urllib.request
 
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="Jutge Assignatures", layout="wide")
-
-
-def get_default_api_base_url() -> str:
-    default = os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000")
-    return default.rstrip("/")
-
-
-def api_post_form(base_url: str, path: str, form_data: dict, token: str | None = None):
-    body = urllib.parse.urlencode(form_data).encode()
-    req = urllib.request.Request(f"{base_url}{path}", data=body, method="POST")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=12) as response:
-            return response.status, json.loads(response.read().decode())
-    except urllib.error.HTTPError as exc:
-        try:
-            payload = json.loads(exc.read().decode())
-        except Exception:
-            payload = {"detail": str(exc)}
-        return exc.code, payload
-    except Exception as exc:
-        return 0, {"detail": str(exc)}
+st.markdown(
+    """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    [data-testid="stToolbar"] {display: none !important;}
+    [data-testid="stDecoration"] {display: none !important;}
+    [data-testid="stStatusWidget"] {display: none !important;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def api_get(base_url: str, path: str, token: str):
@@ -104,11 +92,10 @@ def api_delete(base_url: str, path: str, token: str):
 
 def ensure_session():
     defaults = {
-        "base_url": get_default_api_base_url(),
+        "base_url": os.getenv("JUTGE_API_BASE_URL", "http://localhost:8000"),
         "token": None,
         "profile": None,
-        "default_username": "alumno_a_base",
-        "default_password": "alumno123",
+        "_lti_params_processed": False,
         "flash_message": None,
         "flash_target": None,
     }
@@ -156,39 +143,14 @@ def show_queued_flash(target: str):
 def logout():
     st.session_state.token = None
     st.session_state.profile = None
+    st.session_state._lti_params_processed = False
 
 
-def render_login():
+def render_lti_required_message():
     st.title("Portal d'assignatures")
-    st.caption("Inicia sessio com a professor o alumne")
-
-    with st.form("subjects_login_form", clear_on_submit=False):
-        username = st.text_input("Usuari", value=st.session_state.default_username)
-        password = st.text_input("Contrasenya", value=st.session_state.default_password, type="password")
-        submitted = st.form_submit_button("Inicia sessio")
-
-    if not submitted:
-        return
-
-    status, token_data = api_post_form(st.session_state.base_url, "/token", {"username": username, "password": password})
-    if status != 200:
-        st.error(token_data.get("detail", "No s'ha pogut iniciar sessio"))
-        return
-
-    token = token_data.get("access_token")
-    if not token:
-        st.error("L'API no ha retornat access_token")
-        return
-
-    me_status, me_payload = api_get(st.session_state.base_url, "/me", token)
-    if me_status != 200:
-        st.error(me_payload.get("detail", "No s'ha pogut carregar el perfil"))
-        return
-
-    st.session_state.token = token
-    st.session_state.profile = me_payload
-    st.success("Sessio iniciada")
-    st.rerun()
+    st.caption("Acces exclusiu via Atenea (LTI)")
+    st.warning("El login local està deshabilitat.")
+    st.info("Accedeix des del launch LTI d'Atenea per obtenir el token d'accés.")
 
 
 def render_teacher_panel(base_url: str, token: str):
@@ -421,8 +383,20 @@ def main():
         base_url = st.text_input("URL base API", value=st.session_state.base_url)
         st.session_state.base_url = base_url.rstrip("/")
 
+    params = st.query_params
+    lti_token = params.get("token")
+    if lti_token and not st.session_state._lti_params_processed and not st.session_state.token:
+        me_status, me_payload = api_get(st.session_state.base_url, "/me", lti_token)
+        if me_status == 200:
+            st.session_state.token = lti_token
+            st.session_state.profile = me_payload
+            st.session_state._lti_params_processed = True
+            st.rerun()
+        st.error("Token LTI invàlid. Torna a entrar des d'Atenea.")
+        return
+
     if not st.session_state.token:
-        render_login()
+        render_lti_required_message()
     else:
         render_dashboard()
 
