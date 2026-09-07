@@ -349,7 +349,44 @@ def render_dashboard():
     selected_topic_id = topic_filter_options[selected_topic_label]
     st.session_state.selected_topic_filter_id = selected_topic_id
 
-    st.markdown("### Temes")
+    selected_topic = None
+    if selected_topic_id is not None:
+        selected_topic = next(
+            (
+                topic
+                for topic in topics
+                if topic.get("id") is not None and int(topic.get("id")) == int(selected_topic_id)
+            ),
+            None,
+        )
+
+    if selected_topic:
+        required_beginner = int(selected_topic.get("required_beginner") or 0)
+        required_mid = int(selected_topic.get("required_mid") or 0)
+        required_expert = int(selected_topic.get("required_expert") or 0)
+        topic_name = selected_topic.get("name") or "Tema"
+        st.markdown(
+            f"**{topic_name}** — requisits per superar-lo: "
+            f"bàsic {required_beginner}, "
+            f"intermedi {required_mid}, "
+            f"difícil {required_expert}"
+        )
+
+    def normalize_metric(value):
+        if isinstance(value, (int, float, str)):
+            return value
+        return 0
+
+    completed_value = progress.get("completed_exercises_count", progress.get("completed_exercises", 0))
+    attempts_value = progress.get("total_attempts", progress.get("attempts", 0))
+
+    st.markdown("### Progrés de l'assignatura")
+    progress_cols = st.columns(3)
+    progress_cols[0].metric("Exercicis (assignatura)", normalize_metric(progress.get("total_exercises", 0)))
+    progress_cols[1].metric("Completats (assignatura)", normalize_metric(completed_value))
+    progress_cols[2].metric("Intents (assignatura)", normalize_metric(attempts_value))
+
+    st.markdown("### Retroaccions del tema")
     filtered_topic_feedback = [
         item
         for item in topic_secrets
@@ -367,19 +404,6 @@ def render_dashboard():
                 st.info(f"Retroaccio de {topic_name}: {retroaccio}")
     else:
         st.caption("No tens retroaccions desbloquejades per aquest filtre de tema.")
-
-    def normalize_metric(value):
-        if isinstance(value, (int, float, str)):
-            return value
-        return 0
-
-    completed_value = progress.get("completed_exercises_count", progress.get("completed_exercises", 0))
-    attempts_value = progress.get("total_attempts", progress.get("attempts", 0))
-
-    progress_cols = st.columns(3)
-    progress_cols[0].metric("Exercicis totals", normalize_metric(progress.get("total_exercises", 0)))
-    progress_cols[1].metric("Completats", normalize_metric(completed_value))
-    progress_cols[2].metric("Intents totals", normalize_metric(attempts_value))
 
     st.subheader("Enviar tasca")
     selected_id = None
