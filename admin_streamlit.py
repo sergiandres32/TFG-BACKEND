@@ -324,6 +324,7 @@ def render_dashboard():
     show_exercises = selected_section == "Exercicis"
     show_test_cases = selected_section == "Proves"
     show_tracking = selected_section == "Alumnat"
+    show_full_import = selected_section == "Importació completa"
 
     if show_overview:
         st.info("Selecciona un apartat a la barra lateral per treballar de forma enfocada.")
@@ -996,7 +997,11 @@ def render_dashboard():
 
         with st.form("create_exercise_form", clear_on_submit=True):
             exercise_title = st.text_input("Títol")
-            exercise_description = st.text_area("Descripció de l'exercici", height=80)
+            exercise_description = st.text_area(
+                "Descripció de l'exercici",
+                height=80,
+                help="Accepta Markdown: per afegir una imatge allotjada externament, usa ![alt](https://url-de-la-imatge.png)",
+            )
             exercise_level = st.selectbox(
                 "Nivell",
                 options=["beginner", "mid", "expert"],
@@ -1682,6 +1687,179 @@ def render_dashboard():
                         key=f"teacher_bulk_ac_download_btn_{student_fragment}_{exercise_fragment}",
                     )
 
+    if show_full_import:
+        st.subheader("Importació completa (temes + exercicis + jocs de prova)")
+        st.caption(
+            "Enganxa un únic JSON niat amb aquesta forma: {'topics': [{'name', 'description'(opc), "
+            "'weight'(opc), 'required_beginner'/'required_mid'/'required_expert'(opc), 'topic_id'(opc, "
+            "per reutilitzar un tema existent en comptes de crear-ne un de nou), 'exercises': [{'title', "
+            "'description'(opc), 'level' (beginner|mid|expert o bàsic/intermedi/difícil), "
+            "'expected_submission_type'(opc: c_file|zip_makefile), 'is_required'(opc), 'test_cases': "
+            "[{'name', 'hidden'(opc), 'content': {'input','expected','mode'(exact|contains),'ignore_whitespace'}}]}]}]}."
+        )
+
+        with st.form("import_full_json_form"):
+            full_json_input = st.text_area(
+                "JSON complet",
+                height=320,
+                key="full_json_import_input",
+                placeholder=(
+                    '{"topics": [{"name": "Processos", "exercises": [{"title": "Suma", "level": "beginner", '
+                    '"test_cases": [{"name": "t1", "content": {"input": "2 2", "expected": "4"}}]}]}]}'
+                ),
+            )
+            import_full = st.form_submit_button("Importar tot")
+
+        if import_full:
+            try:
+                parsed_full = json.loads(full_json_input.strip())
+            except json.JSONDecodeError as exc:
+                st.error(f"JSON invàlid: {exc}")
+                parsed_full = None
+
+            if parsed_full is not None:
+                topics_payload = parsed_full.get("topics") if isinstance(parsed_full, dict) else None
+                if not isinstance(topics_payload, list):
+                    st.error("El JSON ha de ser un objecte amb una clau 'topics' que contingui una llista de temes.")
+                else:
+                    created_topics = 0
+                    created_exercises = 0
+                    created_test_cases = 0
+                    failed_count = 0
+
+                    for topic_idx, topic_item in enumerate(topics_payload, start=1):
+                        if not isinstance(topic_item, dict):
+                            failed_count += 1
+                            st.error(f"Tema #{topic_idx}: ha de ser un objecte.")
+                            continue
+
+                        topic_id_value = topic_item.get("topic_id")
+                        if topic_id_value is not None:
+                            try:
+                                topic_id_value = int(topic_id_value)
+                            except (TypeError, ValueError):
+                                failed_count += 1
+                                st.error(f"Tema #{topic_idx}: 'topic_id' invàlid.")
+                                continue
+                        else:
+                            topic_name = str(topic_item.get("name") or "").strip()
+                            if not topic_name:
+                                failed_count += 1
+                                st.error(f"Tema #{topic_idx}: cal indicar 'name' o 'topic_id'.")
+                                continue
+                            topic_create_payload = {
+                                "subject_id": selected_subject_id,
+                                "name": topic_name,
+                                "description": topic_item.get("description"),
+                                "weight": float(topic_item.get("weight", 1.0)),
+                                "required_beginner": int(topic_item.get("required_beginner", 0)),
+                                "required_mid": int(topic_item.get("required_mid", 0)),
+                                "required_expert": int(topic_item.get("required_expert", 0)),
+                            }
+                            t_status, t_result = api_post_json(base_url, "/topics", topic_create_payload, token)
+                            if t_status != 200:
+                                failed_count += 1
+                                st.error(f"Tema #{topic_idx} ({topic_name}): {t_result.get('detail', 'No s\'ha pogut crear el tema')}")
+                                continue
+                            topic_id_value = t_result.get("id")
+                            created_topics += 1
+
+                        exercises_payload = topic_item.get("exercises") or []
+                        if not isinstance(exercises_payload, list):
+                            failed_count += 1
+                            st.error(f"Tema #{topic_idx}: 'exercises' ha de ser una llista.")
+                            continue
+
+                        for ex_idx, exercise_item in enumerate(exercises_payload, start=1):
+                            if not isinstance(exercise_item, dict):
+                                failed_count += 1
+                                st.error(f"Tema #{topic_idx} / exercici #{ex_idx}: ha de ser un objecte.")
+                                continue
+
+                            title = str(exercise_item.get("title") or "").strip()
+                            if not title:
+                                failed_count += 1
+                                st.error(f"Tema #{topic_idx} / exercici #{ex_idx}: falta 'title'.")
+                                continue
+
+                            level_value = normalize_level_value(exercise_item.get("level", "beginner"))
+                            exercise_create_payload = {
+                                "title": title,
+                                "description": exercise_item.get("description"),
+                                "level": level_value,
+                                "topic_id": topic_id_value,
+                                "expected_submission_type": exercise_item.get("expected_submission_type", "c_file"),
+                                "is_required": bool(exercise_item.get("is_required", False)),
+                            }
+                            e_status, e_result = api_post_json(base_url, "/exercises", exercise_create_payload, token)
+                            if e_status != 200:
+                                failed_count += 1
+                                st.error(
+                                    f"Tema #{topic_idx} / exercici #{ex_idx} ({title}): "
+                                    f"{e_result.get('detail', 'No s\'ha pogut crear l\'exercici')}"
+                                )
+                                continue
+                            exercise_id_value = e_result.get("id")
+                            created_exercises += 1
+
+                            test_cases_payload = exercise_item.get("test_cases") or []
+                            if not isinstance(test_cases_payload, list):
+                                failed_count += 1
+                                st.error(f"Exercici '{title}': 'test_cases' ha de ser una llista.")
+                                continue
+
+                            for tc_idx, tc_item in enumerate(test_cases_payload, start=1):
+                                if not isinstance(tc_item, dict):
+                                    failed_count += 1
+                                    st.error(f"Exercici '{title}' / test #{tc_idx}: ha de ser un objecte.")
+                                    continue
+
+                                tc_name = str(tc_item.get("name") or "").strip()
+                                if not tc_name:
+                                    failed_count += 1
+                                    st.error(f"Exercici '{title}' / test #{tc_idx}: falta 'name'.")
+                                    continue
+
+                                content = tc_item.get("content")
+                                if not isinstance(content, dict):
+                                    failed_count += 1
+                                    st.error(f"Exercici '{title}' / test #{tc_idx}: falta objecte 'content'.")
+                                    continue
+
+                                tc_payload = {
+                                    "exercise_id": exercise_id_value,
+                                    "name": tc_name,
+                                    "content": {
+                                        "input": str(content.get("input") or ""),
+                                        "expected": str(content.get("expected") or ""),
+                                        "mode": str(content.get("mode") or "exact"),
+                                        "ignore_whitespace": bool(content.get("ignore_whitespace", False)),
+                                    },
+                                }
+                                if "hidden" in tc_item:
+                                    tc_payload["hidden"] = bool(tc_item.get("hidden"))
+
+                                tc_status, tc_result = api_post_json(base_url, "/test_cases", tc_payload, token)
+                                if tc_status == 200:
+                                    created_test_cases += 1
+                                else:
+                                    failed_count += 1
+                                    st.error(
+                                        f"Exercici '{title}' / test #{tc_idx}: "
+                                        f"{tc_result.get('detail', 'No s\'ha pogut crear el joc de prova')}"
+                                    )
+
+                    if created_topics or created_exercises or created_test_cases:
+                        st.success(
+                            f"Importació completada: {created_topics} tema(es), "
+                            f"{created_exercises} exercici(s), {created_test_cases} joc(s) de prova creat(s)."
+                        )
+                    if failed_count:
+                        st.warning(f"Importació amb incidències: {failed_count} element(s) no creat(s).")
+                    if created_topics or created_exercises or created_test_cases:
+                        queue_flash("Importació completa realitzada.", target="create_topic")
+                        st.rerun()
+
     # st.subheader("Top leaderboard")
     # if leaderboard:
     #     st.dataframe(leaderboard[:10], use_container_width=True, hide_index=True)
@@ -1774,6 +1952,7 @@ def main():
                     "Exercicis",
                     "Proves",
                     "Alumnat",
+                    "Importació completa",
                 ],
                 key="admin_section",
                 label_visibility="collapsed",

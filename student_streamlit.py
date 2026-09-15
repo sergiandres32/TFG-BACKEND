@@ -449,7 +449,7 @@ def render_dashboard():
             st.markdown(
                 f"**{selected_exercise.get('title')}** — nivell: {level_to_ca(selected_exercise.get('level'))} — obligatori: {'Sí' if selected_exercise.get('is_required') else 'No'} — tipus entrega: {expected_file_label}"
             )
-            st.write(selected_exercise.get("description") or "Sense descripció")
+            st.markdown(selected_exercise.get("description") or "Sense descripció")
             st.write(f"Completat: **{completion_label}**")
 
             inline_ex_id = st.session_state.get("inline_info_exercise_id")
