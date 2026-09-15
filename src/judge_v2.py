@@ -45,16 +45,16 @@ def compile_with_gcc(source_code: str, output_path: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def run_executable(exec_path: str, input_data: str, timeout: int = 5) -> Dict[str, Any]:
+def run_executable(exec_path: str, input_data: str, timeout: int = 5, args: List[str] = None) -> Dict[str, Any]:
     """
-    Ejecuta binario con input, retorna dict con stdout/stderr/exit_code/timed_out/time.
-    Detecta OOM en contexto Docker (killed por OOMKiller).
+    Ejecuta binario con input y argumentos de linea de comandos (args), retorna dict
+    con stdout/stderr/exit_code/timed_out/time. Detecta OOM en contexto Docker (killed por OOMKiller).
     """
     try:
         start = time.time()
         # Capture bytes and decode with replacement to avoid decoding exceptions
         proc = subprocess.run(
-            [exec_path],
+            [exec_path, *(args or [])],
             input=input_data.encode('utf-8'),
             capture_output=True,
             timeout=timeout
@@ -218,9 +218,10 @@ def run_and_evaluate_all_tests(
         for test in tests_obj.get("tests", []):
             test_id = test.get("id") or test.get("name") or "unnamed"
             input_data = test.get("input", "")
-            
+            args = test.get("args") or []
+
             # Ejecutar
-            run_result = run_executable(exe_path, input_data, timeout=timeout)
+            run_result = run_executable(exe_path, input_data, timeout=timeout, args=args)
             
             # Detectar OOM
             if run_result.get("oom_killed"):

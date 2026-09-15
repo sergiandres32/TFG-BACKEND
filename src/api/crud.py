@@ -1102,7 +1102,8 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
                 "mode": tc.content.get("mode", "exact"),
                 "input": tc.content.get("input", ""),
                 "expected": tc.content.get("expected", ""),
-                "ignore_whitespace": tc.content.get("ignore_whitespace", False)
+                "ignore_whitespace": tc.content.get("ignore_whitespace", False),
+                "args": tc.content.get("args", [])
             }
             for tc in test_cases
         ]

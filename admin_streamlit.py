@@ -1205,6 +1205,10 @@ def render_dashboard():
             with st.form("create_test_case_form", clear_on_submit=True):
                 test_name = st.text_input("Nom del joc de prova")
                 test_mode = st.selectbox("Mode de comparació", options=["exact", "contains"], index=0)
+                test_args = st.text_input(
+                    "Arguments de línia de comandes (opcional)",
+                    help="Separats per espais, s'envien al binari com argv. Exemple: 7 per una clau de xifrat.",
+                )
                 test_input = st.text_area("Input", height=100)
                 test_expected = st.text_area("Output esperat", height=100)
                 test_ignore_ws = st.checkbox("Ignorar espais en blanc", value=False)
@@ -1222,6 +1226,7 @@ def render_dashboard():
                             "expected": test_expected,
                             "mode": test_mode,
                             "ignore_whitespace": test_ignore_ws,
+                            "args": test_args.split(),
                         },
                     }
                     tc_status, tc_result = api_post_json(base_url, "/test_cases", tc_payload, token)
@@ -1237,12 +1242,12 @@ def render_dashboard():
                 st.rerun()
 
             with st.form("import_testcases_json_form"):
-                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|contains), ignore_whitespace}.")
+                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|contains), ignore_whitespace, args(opcional, llista d'arguments argv)}.")
                 testcases_json_input = st.text_area(
                     "JSON de jocs de prova",
                     height=220,
                     key="testcases_json_import_input",
-                    placeholder='[{"name":"suma_2_mes_2","content":{"input":"2 2","expected":"4","mode":"exact","ignore_whitespace":true}}]',
+                    placeholder='[{"name":"suma_2_mes_2","content":{"input":"2 2","expected":"4","mode":"exact","ignore_whitespace":true,"args":["7"]}}]',
                 )
                 import_testcases = st.form_submit_button("Importar jocs de prova")
 
@@ -1282,6 +1287,7 @@ def render_dashboard():
                                 "expected": str(content.get("expected") or ""),
                                 "mode": str(content.get("mode") or "exact"),
                                 "ignore_whitespace": bool(content.get("ignore_whitespace", False)),
+                                "args": [str(a) for a in (content.get("args") or [])],
                             },
                         }
                         if "hidden" in item:
@@ -1695,7 +1701,7 @@ def render_dashboard():
             "per reutilitzar un tema existent en comptes de crear-ne un de nou), 'exercises': [{'title', "
             "'description'(opc), 'level' (beginner|mid|expert o bàsic/intermedi/difícil), "
             "'expected_submission_type'(opc: c_file|zip_makefile), 'is_required'(opc), 'test_cases': "
-            "[{'name', 'hidden'(opc), 'content': {'input','expected','mode'(exact|contains),'ignore_whitespace'}}]}]}]}."
+            "[{'name', 'hidden'(opc), 'content': {'input','expected','mode'(exact|contains),'ignore_whitespace','args'(opc, llista d'argv)}}]}]}]}."
         )
 
         with st.form("import_full_json_form"):
@@ -1834,6 +1840,7 @@ def render_dashboard():
                                         "expected": str(content.get("expected") or ""),
                                         "mode": str(content.get("mode") or "exact"),
                                         "ignore_whitespace": bool(content.get("ignore_whitespace", False)),
+                                        "args": [str(a) for a in (content.get("args") or [])],
                                     },
                                 }
                                 if "hidden" in tc_item:

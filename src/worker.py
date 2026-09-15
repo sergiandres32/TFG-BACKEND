@@ -52,6 +52,7 @@ def _build_tests_obj(db_session: sessionmaker, exercise_id: int) -> dict:
                     "input": tc.content.get("input", ""),
                     "expected": tc.content.get("expected", ""),
                     "ignore_whitespace": tc.content.get("ignore_whitespace", False),
+                    "args": tc.content.get("args", []),
                 }
                 for tc in test_cases
             ]
@@ -154,8 +155,9 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
     for test in tests_obj.get("tests", []):
         test_id = test.get("id") or test.get("name") or "unnamed"
         input_data = test.get("input", "")
+        args = test.get("args") or []
 
-        run_result = judge_v2.run_executable(executable_path, input_data, timeout=timeout)
+        run_result = judge_v2.run_executable(executable_path, input_data, timeout=timeout, args=args)
 
         if run_result.get("oom_killed"):
             has_oom = True
