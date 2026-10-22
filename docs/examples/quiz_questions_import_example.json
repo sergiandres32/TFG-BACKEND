@@ -1,0 +1,18 @@
+[
+  {
+    "topic_id": 1,
+    "level": "beginner",
+    "statement": "Quina funció s'utilitza per imprimir text per pantalla en C?",
+    "options": ["scanf", "printf", "malloc", "fopen"],
+    "correct_option_index": 1,
+    "is_required": true
+  },
+  {
+    "topic_id": 1,
+    "level": "mid",
+    "statement": "Quin operador s'utilitza per obtenir l'adreça d'una variable?",
+    "options": ["*", "&", "->", "%"],
+    "correct_option_index": 1,
+    "is_required": false
+  }
+]

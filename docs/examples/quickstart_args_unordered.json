@@ -1,0 +1,67 @@
+{
+  "topics": [
+    {
+      "name": "Quickstart: arguments i sortida sense ordre",
+      "description": "Exercicis de prova per validar execution_args (parametres d'execucio de l'exercici) i els modes unordered_lines / unordered_tokens. Solucions a docs/examples/quickstart_args_unordered/solutions/.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Taula de multiplicar (execution_args)",
+          "description": "Programa taula.c. El professor ha definit un argument d'execucio fix (N): el binari es llanca sempre com `./taula 3`. Llegeix un enter X de stdin i escriu X*1, X*2, ... X*N, un per linia. Solucions de prova: taula_ok.c (AC) i taula_ko.c (WA, ignora argv).",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "execution_args": ["3"],
+          "test_cases": [
+            {
+              "name": "x4",
+              "hidden": false,
+              "content": { "input": "4\n", "expected": "4\n8\n12\n", "mode": "exact" }
+            },
+            {
+              "name": "x10",
+              "hidden": true,
+              "content": { "input": "10\n", "expected": "10\n20\n30\n", "mode": "exact" }
+            }
+          ]
+        },
+        {
+          "title": "Fills concurrents (unordered_lines)",
+          "description": "Programa fills.c. Crea 4 fills amb fork(); el fill i (1..4) escriu a stdout la linia `fill i`. El pare espera tots els fills amb wait(). L'ordre de les linies depen de quin fill acaba primer, per tant el test usa mode unordered_lines. Solucions de prova: fills_ok.c (AC, els fills acaben en ordre invers a proposit) i fills_ko.c (WA, falta un fill).",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "test_cases": [
+            {
+              "name": "quatre_fills",
+              "hidden": false,
+              "content": {
+                "input": "",
+                "expected": "fill 2\nfill 1\nfill 3\nfill 4\n",
+                "mode": "unordered_lines"
+              }
+            }
+          ]
+        },
+        {
+          "title": "Fills amb N parametritzable (args + unordered_tokens)",
+          "description": "Programa tokens.c. Es llanca sempre com `./tokens 4` (execution_args) i a mes cada test pot afegir arguments propis. Crea N fills; cada fill escriu el seu index (1..N) seguit d'un espai. Quan tots acaben, el pare escriu un salt de linia. L'ordre dels indexs no importa (unordered_tokens). Solucions de prova: tokens_ok.c (AC) i tokens_ko.c (WA, ignora argv i usa 3 fills).",
+          "level": "mid",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "execution_args": ["4"],
+          "test_cases": [
+            {
+              "name": "n4_indexs",
+              "hidden": false,
+              "content": { "input": "", "expected": "2 1 3 4\n", "mode": "unordered_tokens" }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

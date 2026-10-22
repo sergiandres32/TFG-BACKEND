@@ -272,6 +272,16 @@ def ensure_phase5_exercise_submission_type_schema(engine):
                 )
             )
 
+def ensure_phase6_exercise_execution_args_schema(engine):
+    inspector = inspect(engine)
+    if "exercises" not in set(inspector.get_table_names()):
+        return
+    exercise_columns = {col["name"] for col in inspector.get_columns("exercises")}
+    if "execution_args" not in exercise_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE exercises ADD COLUMN execution_args JSON"))
+
+
 def get_db():
     db = SessionLocal()
     try:

@@ -562,6 +562,7 @@ def create_exercise(db: Session, ex: schemas.ExerciseCreate, creator_id: int = N
         level=ex.level,
         expected_submission_type=ex.expected_submission_type,
         is_required=ex.is_required,
+        execution_args=ex.execution_args or None,
         created_by=creator_id,
     )
     db.add(db_ex)
@@ -581,6 +582,7 @@ def update_exercise(db: Session, exercise_id: int, ex_data: schemas.ExerciseUpda
     exercise.level = ex_data.level
     exercise.expected_submission_type = ex_data.expected_submission_type
     exercise.is_required = ex_data.is_required
+    exercise.execution_args = ex_data.execution_args or None
     db.commit()
     db.refresh(exercise)
     return exercise
@@ -1095,7 +1097,9 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
         return {"error": "No test cases found for exercise", "verdict": models.RunVerdict.CE}
     
     # Construir objeto tests en formato que espera judge_v2
+    exercise = get_exercise_by_id(db, exercise_id)
     tests_obj = {
+        "exercise_args": list((exercise.execution_args if exercise else None) or []),
         "tests": [
             {
                 "id": tc.name,
@@ -1106,7 +1110,7 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
                 "args": tc.content.get("args", [])
             }
             for tc in test_cases
-        ]
+        ],
     }
     
     # Evaluar

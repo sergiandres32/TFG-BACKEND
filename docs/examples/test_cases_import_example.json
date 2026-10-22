@@ -1,0 +1,42 @@
+[
+  {
+    "exercise_id": 1,
+    "name": "sum_basic_1",
+    "content": {
+      "input": "2 3\n",
+      "expected": "5\n",
+      "mode": "exact",
+      "ignore_whitespace": false
+    }
+  },
+  {
+    "exercise_id": 1,
+    "name": "sum_negative",
+    "content": {
+      "input": "-4 10\n",
+      "expected": "6\n",
+      "mode": "exact",
+      "ignore_whitespace": false
+    }
+  },
+  {
+    "exercise_id": 2,
+    "name": "max_ordered",
+    "content": {
+      "input": "1 5 3\n",
+      "expected": "5\n",
+      "mode": "exact",
+      "ignore_whitespace": false
+    }
+  },
+  {
+    "exercise_id": 2,
+    "name": "max_equal",
+    "content": {
+      "input": "7 7 2\n",
+      "expected": "7\n",
+      "mode": "exact",
+      "ignore_whitespace": false
+    }
+  }
+]

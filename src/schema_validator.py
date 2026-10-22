@@ -22,7 +22,7 @@ TEST_CASES_SCHEMA = {
                 "properties": {
                     "id": {"type": "string"},
                     "input": {"type": "string"},
-                    "mode": {"enum": ["exact", "lines", "regex"]},
+                    "mode": {"enum": ["exact", "lines", "regex", "unordered_lines", "unordered_tokens"]},
                     "expected": {"type": "string"},
                     "ignore_whitespace": {"type": "boolean"},
                     "description": {"type": "string"}
@@ -133,7 +133,7 @@ def validate_test_cases(json_path: str) -> Tuple[bool, str]:
         
         # Mode debe ser válido
         if "mode" in test:
-            errors.extend(_validate_enum(test["mode"], ["exact", "lines", "regex"], "mode", test_path))
+            errors.extend(_validate_enum(test["mode"], ["exact", "lines", "regex", "unordered_lines", "unordered_tokens"], "mode", test_path))
         
         # ignore_whitespace debe ser boolean (si existe)
         if "ignore_whitespace" in test and not isinstance(test["ignore_whitespace"], bool):

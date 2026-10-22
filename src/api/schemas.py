@@ -77,6 +77,7 @@ class ExerciseCreate(BaseModel):
     topic_id: Optional[int] = None
     expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
+    execution_args: Optional[list[str]] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -87,6 +88,7 @@ class ExerciseCreate(BaseModel):
                 "topic_id": 1,
                 "expected_submission_type": "c_file",
                 "is_required": False,
+                "execution_args": ["10"],
             }
         }
     )
@@ -99,6 +101,7 @@ class ExerciseUpdate(BaseModel):
     topic_id: Optional[int] = None
     expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
+    execution_args: Optional[list[str]] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -109,6 +112,7 @@ class ExerciseUpdate(BaseModel):
                 "topic_id": 1,
                 "expected_submission_type": "c_file",
                 "is_required": False,
+                "execution_args": ["10"],
             }
         }
     )
@@ -123,6 +127,7 @@ class ExerciseListItem(BaseModel):
     expected_submission_type: Literal["c_file", "zip_makefile"]
     is_required: bool
     completed: bool
+    execution_args: Optional[list[str]] = None
 
     model_config = ConfigDict(
         json_schema_extra={

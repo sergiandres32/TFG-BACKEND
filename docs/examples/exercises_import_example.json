@@ -1,0 +1,16 @@
+[
+  {
+    "title": "sum_two_integers",
+    "description": "Llegeix dos enters i mostra la seva suma.",
+    "level": "beginner",
+    "is_required": false,
+    "topic_id": 1
+  },
+  {
+    "title": "max_of_three",
+    "description": "Llegeix tres enters i imprimeix el màxim.",
+    "level": "mid",
+    "is_required": true,
+    "topic_id": 1
+  }
+]

@@ -942,6 +942,7 @@ def render_dashboard():
                         "expected_submission_type": new_expected_submission_type,
                         "topic_id": new_topic_id,
                         "is_required": new_is_required,
+                        "execution_args": original.get("execution_args"),
                     }
                     status, result = api_put_json(base_url, f"/exercises/{exercise_id}", payload, token)
                     if status == 200:
@@ -1015,6 +1016,10 @@ def render_dashboard():
                 help="c_file = fitxer C unic (.c), zip_makefile = projecte .zip amb Makefile",
             )
             exercise_required = st.checkbox("Exercici obligatori", value=False)
+            exercise_exec_args = st.text_input(
+                "Arguments d'execució (opcional)",
+                help="Separats per espais. Si s'omplen, s'envien SEMPRE al binari de l'alumne (abans dels arguments propis de cada joc de prova). Buit = execució normal.",
+            )
             create_exercise = st.form_submit_button("Crear exercici")
 
         if create_exercise:
@@ -1028,6 +1033,8 @@ def render_dashboard():
                     "expected_submission_type": exercise_submission_type,
                     "is_required": bool(exercise_required),
                 }
+                if exercise_exec_args.strip():
+                    payload["execution_args"] = exercise_exec_args.split()
                 selected_topic_id = topic_options[selected_topic_label]
                 if selected_topic_id is not None:
                     payload["topic_id"] = selected_topic_id
@@ -1045,7 +1052,7 @@ def render_dashboard():
             st.rerun()
 
         with st.form("import_exercises_json_form"):
-            st.caption("Accepta objecte o llista amb claus: title, description, level (beginner|mid|expert o bàsic/basic|intermedi|difícil/dificil), expected_submission_type (opcional: c_file|zip_makefile), is_required (opcional), i topic_id o topic_name (almenys un dels dos).")
+            st.caption("Accepta objecte o llista amb claus: title, description, level (beginner|mid|expert o bàsic/basic|intermedi|difícil/dificil), expected_submission_type (opcional: c_file|zip_makefile), is_required (opcional), execution_args (opcional, llista d'arguments), i topic_id o topic_name (almenys un dels dos).")
             exercises_json_input = st.text_area(
                 "JSON d'exercicis",
                 height=220,
@@ -1114,6 +1121,9 @@ def render_dashboard():
                         "expected_submission_type": expected_submission_type,
                         "is_required": bool(item.get("is_required", False)),
                     }
+
+                    if item.get("execution_args"):
+                        payload["execution_args"] = [str(a) for a in item["execution_args"]]
 
                     if topic_id_value is not None:
                         try:
@@ -1204,7 +1214,12 @@ def render_dashboard():
 
             with st.form("create_test_case_form", clear_on_submit=True):
                 test_name = st.text_input("Nom del joc de prova")
-                test_mode = st.selectbox("Mode de comparació", options=["exact", "contains"], index=0)
+                test_mode = st.selectbox(
+                    "Mode de comparació",
+                    options=["exact", "lines", "unordered_lines", "unordered_tokens", "regex"],
+                    index=0,
+                    help="unordered_lines / unordered_tokens: ignoren l'ordre de línies / paraules (p.ex. fills concurrents), respectant duplicats.",
+                )
                 test_args = st.text_input(
                     "Arguments de línia de comandes (opcional)",
                     help="Separats per espais, s'envien al binari com argv. Exemple: 7 per una clau de xifrat.",
@@ -1242,7 +1257,7 @@ def render_dashboard():
                 st.rerun()
 
             with st.form("import_testcases_json_form"):
-                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|contains), ignore_whitespace, args(opcional, llista d'arguments argv)}.")
+                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|lines|unordered_lines|unordered_tokens|regex), ignore_whitespace, args(opcional, llista d'arguments argv)}.")
                 testcases_json_input = st.text_area(
                     "JSON de jocs de prova",
                     height=220,
@@ -1701,7 +1716,7 @@ def render_dashboard():
             "per reutilitzar un tema existent en comptes de crear-ne un de nou), 'exercises': [{'title', "
             "'description'(opc), 'level' (beginner|mid|expert o bàsic/intermedi/difícil), "
             "'expected_submission_type'(opc: c_file|zip_makefile), 'is_required'(opc), 'test_cases': "
-            "[{'name', 'hidden'(opc), 'content': {'input','expected','mode'(exact|contains),'ignore_whitespace','args'(opc, llista d'argv)}}]}]}]}."
+            "[{'name', 'hidden'(opc), 'content': {'input','expected','mode'(exact|lines|unordered_lines|unordered_tokens|regex),'ignore_whitespace','args'(opc, llista d'argv)}}]}]}]}."
         )
 
         with st.form("import_full_json_form"):
@@ -1797,6 +1812,8 @@ def render_dashboard():
                                 "expected_submission_type": exercise_item.get("expected_submission_type", "c_file"),
                                 "is_required": bool(exercise_item.get("is_required", False)),
                             }
+                            if exercise_item.get("execution_args"):
+                                exercise_create_payload["execution_args"] = [str(a) for a in exercise_item["execution_args"]]
                             e_status, e_result = api_post_json(base_url, "/exercises", exercise_create_payload, token)
                             if e_status != 200:
                                 failed_count += 1

@@ -113,6 +113,11 @@ def run_executable(exec_path: str, input_data: str, timeout: int = 5, args: List
         }
 
 
+def resolve_args(tests_obj: Dict[str, Any], test: Dict[str, Any]) -> List[str]:
+    """Args del ejercicio (siempre) seguidos de los args propios del test case."""
+    return [str(a) for a in (tests_obj.get("exercise_args") or [])] + [str(a) for a in (test.get("args") or [])]
+
+
 def normalize_text(s: str, ignore_whitespace: bool) -> str:
     """Normaliza texto para comparación."""
     if ignore_whitespace:
@@ -167,6 +172,24 @@ def evaluate_test(actual_output: str, test: Dict[str, Any]) -> Dict[str, Any]:
             "verdict_detail": "Lines match" if matched else f"Lines differ"
         }
 
+    elif mode in ("unordered_lines", "unordered_tokens"):
+        expected = test.get("expected")
+        if expected is None:
+            return {"passed": False, "verdict_detail": "No expected text"}
+
+        if mode == "unordered_lines":
+            out_items = [normalize_text(l, ignore_ws) for l in actual_output.splitlines()]
+            exp_items = [normalize_text(l, ignore_ws) for l in expected.splitlines()]
+        else:
+            out_items = actual_output.split()
+            exp_items = expected.split()
+        # Multiset: ignora el orden pero respeta duplicados
+        matched = sorted(out_items) == sorted(exp_items)
+        return {
+            "passed": matched,
+            "verdict_detail": "Unordered match" if matched else "Unordered mismatch"
+        }
+
     return {"passed": False, "verdict_detail": f"Unknown mode: {mode}"}
 
 
@@ -218,7 +241,7 @@ def run_and_evaluate_all_tests(
         for test in tests_obj.get("tests", []):
             test_id = test.get("id") or test.get("name") or "unnamed"
             input_data = test.get("input", "")
-            args = test.get("args") or []
+            args = resolve_args(tests_obj, test)
 
             # Ejecutar
             run_result = run_executable(exe_path, input_data, timeout=timeout, args=args)

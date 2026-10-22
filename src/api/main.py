@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, For
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
-from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema
+from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema, ensure_phase6_exercise_execution_args_schema
 from .security import create_access_token, get_current_user, require_teacher, require_student
 import base64
 import hashlib
@@ -19,6 +19,7 @@ ensure_phase2_multi_subject_schema(engine)
 ensure_phase3_lti_schema(engine)
 ensure_phase4_topic_secret_schema(engine)
 ensure_phase5_exercise_submission_type_schema(engine)
+ensure_phase6_exercise_execution_args_schema(engine)
 
 app = FastAPI(
     title="Jutge Mini API",
@@ -938,6 +939,7 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
             else updated.expected_submission_type
         ),
         "is_required": bool(updated.is_required),
+        "execution_args": updated.execution_args,
     }
 
 
@@ -1088,6 +1090,7 @@ def list_exercises(subject_id: int | None = None, current=Depends(get_current_us
             ),
             "is_required": bool(ex.is_required),
             "completed": ex.id in completed_ids,
+            "execution_args": ex.execution_args,
         }
         for ex in exercises
     ]

@@ -137,6 +137,7 @@ class Exercise(Base):
         nullable=False,
     )
     is_required = Column(Boolean, default=False, nullable=False)
+    execution_args = Column(JSON, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

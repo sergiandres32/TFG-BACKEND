@@ -1,0 +1,56 @@
+{
+  "topics": [
+    {
+      "name": "Processos: fork, exec, wait (LAB1)",
+      "description": "Conceptes teorics: processos: fork, exec, wait, exit, getpid. Per entrada/sortida, funcions de la llibreria de C.",
+      "weight": 1.0,
+      "required_beginner": 1,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Encriptar (Cesar, nomes lletres)",
+          "description": "Programa encripta.c que rep com a parametre la clau d'encriptacio. Llegeix de stdin i escriu a stdout el text encriptat amb el metode Cesar (nomes es desplacen les lletres; la resta de caracters es deixen igual).",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": true,
+          "test_cases": [
+            {
+              "name": "missatge_agent_key7",
+              "hidden": false,
+              "content": {
+                "input": "Estimat agent,\nLa missio d'atac al Capitol ha estat un exit, i junts hem sentat\nles bases per un mon millor, on aprendre es divertit, equivocar-se es\nde savis i sempre hi ha una nova oportunitat. Recorda que nomes tu \nconstrueixes la teva realitat, el meu consell es que ho facis amb consciencia.\n\nHa estat un plaer acompanyar-te en aquesta petita part del teu cami, \ngracies pel teu esforc i dedicacio.\nSalut i a reveure.\n\nLa Resistencia\n",
+                "expected": "Lzaptha hnlua,\nSh tpzzpv k'hahj hs Jhwpavs oh lzaha bu lepa, p qbuaz olt zluaha\nslz ihzlz wly bu tvu tpssvy, vu hwylukyl lz kpclyapa, lxbpcvjhy-zl lz\nkl zhcpz p zltwyl op oh buh uvch vwvyabupaha. Yljvykh xbl uvtlz ab \njvuzayblpelz sh alch ylhspaha, ls tlb jvuzlss lz xbl ov mhjpz hti jvuzjplujph.\n\nOh lzaha bu wshly hjvtwhufhy-al lu hxblzah wlapah whya kls alb jhtp, \nnyhjplz wls alb lzmvyj p klkpjhjpv.\nZhsba p h ylclbyl.\n\nSh Ylzpzalujph\n",
+                "mode": "exact",
+                "args": [
+                  "7"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "title": "Desencriptar (Cesar, nomes lletres)",
+          "description": "Programa desencripta.c analeg a encripta.c: rep la clau per parametre, llegeix de stdin el text encriptat i escriu a stdout el text desencriptat.",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": true,
+          "test_cases": [
+            {
+              "name": "missatge_agent_key7",
+              "hidden": false,
+              "content": {
+                "input": "Lzaptha hnlua,\nSh tpzzpv k'hahj hs Jhwpavs oh lzaha bu lepa, p qbuaz olt zluaha\nslz ihzlz wly bu tvu tpssvy, vu hwylukyl lz kpclyapa, lxbpcvjhy-zl lz\nkl zhcpz p zltwyl op oh buh uvch vwvyabupaha. Yljvykh xbl uvtlz ab \njvuzayblpelz sh alch ylhspaha, ls tlb jvuzlss lz xbl ov mhjpz hti jvuzjplujph.\n\nOh lzaha bu wshly hjvtwhufhy-al lu hxblzah wlapah whya kls alb jhtp, \nnyhjplz wls alb lzmvyj p klkpjhjpv.\nZhsba p h ylclbyl.\n\nSh Ylzpzalujph\n",
+                "expected": "Estimat agent,\nLa missio d'atac al Capitol ha estat un exit, i junts hem sentat\nles bases per un mon millor, on aprendre es divertit, equivocar-se es\nde savis i sempre hi ha una nova oportunitat. Recorda que nomes tu \nconstrueixes la teva realitat, el meu consell es que ho facis amb consciencia.\n\nHa estat un plaer acompanyar-te en aquesta petita part del teu cami, \ngracies pel teu esforc i dedicacio.\nSalut i a reveure.\n\nLa Resistencia\n",
+                "mode": "exact",
+                "args": [
+                  "7"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

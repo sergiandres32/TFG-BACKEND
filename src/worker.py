@@ -39,12 +39,14 @@ MAX_EXTRACTED_SIZE_BYTES = 20 * 1024 * 1024
 
 
 def _build_tests_obj(db_session: sessionmaker, exercise_id: int) -> dict:
-    from src.api.models import TestCase
+    from src.api.models import TestCase, Exercise
 
     session = db_session()
     try:
         test_cases = session.query(TestCase).filter(TestCase.exercise_id == exercise_id).all()
+        exercise = session.query(Exercise).filter(Exercise.id == exercise_id).first()
         return {
+            "exercise_args": list((exercise.execution_args if exercise else None) or []),
             "tests": [
                 {
                     "id": tc.name,
@@ -155,7 +157,7 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
     for test in tests_obj.get("tests", []):
         test_id = test.get("id") or test.get("name") or "unnamed"
         input_data = test.get("input", "")
-        args = test.get("args") or []
+        args = judge_v2.resolve_args(tests_obj, test)
 
         run_result = judge_v2.run_executable(executable_path, input_data, timeout=timeout, args=args)
 

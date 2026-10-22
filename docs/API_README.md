@@ -477,6 +477,10 @@ Reglas para `.zip`:
 - Debe incluir `Makefile` o `makefile` en la raiz del zip.
 - El worker compila con `make` y ejecuta el binario generado contra los test cases.
 
+Parametros de ejecucion y modos de comparacion:
+- `POST/PUT /exercises` aceptan `execution_args` (lista de strings, opcional). Si se informa, se pasan siempre al binario antes de `content.args` del test case; si se omite, ejecucion como siempre.
+- `content.mode` de un test case admite `exact`, `lines`, `regex`, `unordered_lines` (ignora orden de lineas) y `unordered_tokens` (ignora orden de palabras). Ambos `unordered_*` respetan duplicados.
+
 **Response (200):**
 ```json
 {
