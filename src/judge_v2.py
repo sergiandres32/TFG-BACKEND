@@ -113,6 +113,25 @@ def run_executable(exec_path: str, input_data: str, timeout: int = 5, args: List
         }
 
 
+MAX_CAPTURED_OUTPUT_CHARS = 64 * 1024
+
+
+def build_output_entry(test_id: str, run_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Salida capturada de un test (solo para profesor; nunca va en results/details)."""
+    def clip(text: str) -> str:
+        text = text or ""
+        if len(text) > MAX_CAPTURED_OUTPUT_CHARS:
+            return text[:MAX_CAPTURED_OUTPUT_CHARS] + "\n[...truncated...]"
+        return text
+
+    return {
+        "test_id": test_id,
+        "stdout": clip(run_result.get("stdout", "")),
+        "stderr": clip(run_result.get("stderr", "")),
+        "exit_code": run_result.get("exit_code"),
+    }
+
+
 def resolve_args(tests_obj: Dict[str, Any], test: Dict[str, Any]) -> List[str]:
     """Args del ejercicio (siempre) seguidos de los args propios del test case."""
     return [str(a) for a in (tests_obj.get("exercise_args") or [])] + [str(a) for a in (test.get("args") or [])]
@@ -233,6 +252,7 @@ def run_and_evaluate_all_tests(
         
         # === Ejecución y evaluación ===
         results = []
+        outputs = []
         all_passed = True
         has_tle = False
         has_rte = False
@@ -245,6 +265,7 @@ def run_and_evaluate_all_tests(
 
             # Ejecutar
             run_result = run_executable(exe_path, input_data, timeout=timeout, args=args)
+            outputs.append(build_output_entry(test_id, run_result))
             
             # Detectar OOM
             if run_result.get("oom_killed"):
@@ -307,6 +328,7 @@ def run_and_evaluate_all_tests(
             "verdict": verdict,
             "passed_all": all_passed,
             "results": results,
+            "outputs": outputs,
             "compile_error": None,
             "duration_ms": duration,
         }

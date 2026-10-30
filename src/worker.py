@@ -149,6 +149,7 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
     start_time = time.time()
 
     results = []
+    outputs = []
     all_passed = True
     has_tle = False
     has_rte = False
@@ -160,6 +161,7 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
         args = judge_v2.resolve_args(tests_obj, test)
 
         run_result = judge_v2.run_executable(executable_path, input_data, timeout=timeout, args=args)
+        outputs.append(judge_v2.build_output_entry(test_id, run_result))
 
         if run_result.get("oom_killed"):
             has_oom = True
@@ -212,6 +214,7 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
         "verdict": verdict,
         "passed_all": all_passed,
         "results": results,
+        "outputs": outputs,
         "compile_error": None,
         "duration_ms": duration,
     }
@@ -337,6 +340,7 @@ def process_job(job: Job, db_session_factory):
                 "results": judge_result.get("results"),
                 "compile_error": judge_result.get("compile_error"),
             },
+            outputs=judge_result.get("outputs"),
             code_preview=code_preview,
             code_sha256=code_hash,
             duration_ms=judge_result.get("duration_ms")

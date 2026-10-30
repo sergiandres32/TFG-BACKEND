@@ -282,6 +282,16 @@ def ensure_phase6_exercise_execution_args_schema(engine):
             conn.execute(text("ALTER TABLE exercises ADD COLUMN execution_args JSON"))
 
 
+def ensure_phase7_run_outputs_schema(engine):
+    inspector = inspect(engine)
+    if "runs" not in set(inspector.get_table_names()):
+        return
+    run_columns = {col["name"] for col in inspector.get_columns("runs")}
+    if "outputs" not in run_columns:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE runs ADD COLUMN outputs JSON"))
+
+
 def get_db():
     db = SessionLocal()
     try:

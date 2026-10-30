@@ -621,6 +621,10 @@ Devuelve el archivo original enviado por el alumno:
 
 El nombre de descarga se genera automaticamente con ejercicio + alumno + job id.
 
+### 8.d GET `/teacher/submissions/{job_id}/output` - Descargar output de la entrega (solo profesor)
+
+Devuelve un `.txt` con stdout, stderr y exit code de cada test case de la entrega (truncado a 64 KB por test). `404` si la entrega es anterior a esta funcionalidad o aun no se ha evaluado. El output nunca se expone al alumno (no va en `details`).
+
 ---
 
 ## Endpoints de Usuario Autenticado

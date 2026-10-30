@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, For
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
-from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema, ensure_phase6_exercise_execution_args_schema
+from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema, ensure_phase6_exercise_execution_args_schema, ensure_phase7_run_outputs_schema
 from .security import create_access_token, get_current_user, require_teacher, require_student
 import base64
 import hashlib
@@ -20,6 +20,7 @@ ensure_phase3_lti_schema(engine)
 ensure_phase4_topic_secret_schema(engine)
 ensure_phase5_exercise_submission_type_schema(engine)
 ensure_phase6_exercise_execution_args_schema(engine)
+ensure_phase7_run_outputs_schema(engine)
 
 app = FastAPI(
     title="Jutge Mini API",
@@ -1402,6 +1403,42 @@ def download_teacher_submission(job_id: int, current: models.User = Depends(requ
 
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content=content_bytes, media_type=media_type, headers=headers)
+
+
+@app.get(
+    "/teacher/submissions/{job_id}/output",
+    summary="Descargar salida (stdout/stderr) de una entrega (solo profesor)",
+)
+def download_teacher_submission_output(job_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    subject_id = crud.get_exercise_subject_id(db, int(job.exercise_id))
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    run = db.query(models.Run).filter(models.Run.id == job.run_id).first() if job.run_id else None
+    if not run or not run.outputs:
+        raise HTTPException(status_code=404, detail="No output stored for this submission")
+
+    user = db.query(models.User).filter(models.User.id == job.user_id).first()
+    exercise = db.query(models.Exercise).filter(models.Exercise.id == job.exercise_id).first()
+    exercise_part = _slugify_filename_fragment((exercise.title if exercise else None) or f"exercise_{job.exercise_id}")
+    user_part = _slugify_filename_fragment(((user.email or "").split("@")[0] if user else "") or (user.username if user else "user"))
+
+    sections = []
+    for item in run.outputs:
+        sections.append(
+            f"===== test: {item.get('test_id')} (exit code: {item.get('exit_code')}) =====\n"
+            f"--- stdout ---\n{item.get('stdout') or ''}\n"
+            f"--- stderr ---\n{item.get('stderr') or ''}\n"
+        )
+    filename = f"{exercise_part}__{user_part}__job{job.id}__output.txt"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content="\n".join(sections).encode("utf-8"), media_type="text/plain; charset=utf-8", headers=headers)
 
 
 @app.get(

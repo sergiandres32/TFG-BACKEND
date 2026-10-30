@@ -1595,6 +1595,26 @@ def render_dashboard():
                     key=f"teacher_download_button_{selected_download_job_id}",
                 )
 
+                out_status, out_bytes, out_headers, _ = api_get_bytes(
+                    base_url,
+                    f"/teacher/submissions/{selected_download_job_id}/output",
+                    token,
+                )
+                if out_status == 200 and out_bytes is not None:
+                    out_disposition = out_headers.get("Content-Disposition") or out_headers.get("content-disposition") or ""
+                    st.download_button(
+                        "Descarregar output de l'entrega (stdout/stderr)",
+                        data=out_bytes,
+                        file_name=_filename_from_content_disposition(
+                            out_disposition,
+                            fallback=f"output_job_{selected_download_job_id}.txt",
+                        ),
+                        mime="text/plain",
+                        key=f"teacher_output_download_button_{selected_download_job_id}",
+                    )
+                else:
+                    st.caption("Aquesta entrega no té output desat (anterior a aquesta funcionalitat o encara en cua).")
+
             ac_submissions = [
                 item
                 for item in teacher_submissions

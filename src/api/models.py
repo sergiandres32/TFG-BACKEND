@@ -191,6 +191,7 @@ class Run(Base):
     verdict = Column(Enum(RunVerdict), nullable=False)
     passed = Column(Boolean, nullable=False)
     details = Column(JSON, nullable=True)
+    outputs = Column(JSON, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     memory_kb = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
