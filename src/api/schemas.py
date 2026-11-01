@@ -78,6 +78,7 @@ class ExerciseCreate(BaseModel):
     expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
     execution_args: Optional[list[str]] = None
+    static_rules: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -102,6 +103,7 @@ class ExerciseUpdate(BaseModel):
     expected_submission_type: Literal["c_file", "zip_makefile"] = "c_file"
     is_required: bool = False
     execution_args: Optional[list[str]] = None
+    static_rules: Optional[Dict[str, Any]] = None
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -116,6 +118,10 @@ class ExerciseUpdate(BaseModel):
             }
         }
     )
+
+
+class TeacherStaticRulesUpdate(BaseModel):
+    static_rules: Optional[Dict[str, Any]]
 
 
 class ExerciseListItem(BaseModel):
@@ -364,6 +370,7 @@ class TestCaseCreate(BaseModel):
     exercise_id: int
     name: str
     content: Dict[str, Any]
+    hidden: bool = False
 
     model_config = ConfigDict(
         json_schema_extra={

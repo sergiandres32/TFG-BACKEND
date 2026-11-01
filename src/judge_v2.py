@@ -4,6 +4,7 @@ Diseñado para ser integrado en API y CLI.
 """
 
 import json
+import base64
 import os
 import re
 import shutil
@@ -13,6 +14,13 @@ import tempfile
 import time
 from typing import Any, Dict, List, Tuple
 from enum import Enum
+
+
+MAX_TEST_FILE_BYTES = 5 * 1024 * 1024
+MAX_TEST_FILES_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_TEST_FILE_COUNT = 20
+MAX_CAPTURED_FILE_BYTES = 512 * 1024
+MAX_CAPTURED_RUN_BYTES = 4 * 1024 * 1024
 
 
 class Verdict(str, Enum):
@@ -45,19 +53,27 @@ def compile_with_gcc(source_code: str, output_path: str) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def run_executable(exec_path: str, input_data: str, timeout: int = 5, args: List[str] = None) -> Dict[str, Any]:
+def run_executable(
+    exec_path: str,
+    input_data: str | bytes,
+    timeout: int = 5,
+    args: List[str] = None,
+    cwd: str = None,
+) -> Dict[str, Any]:
     """
     Ejecuta binario con input y argumentos de linea de comandos (args), retorna dict
     con stdout/stderr/exit_code/timed_out/time. Detecta OOM en contexto Docker (killed por OOMKiller).
     """
     try:
         start = time.time()
+        input_bytes = input_data if isinstance(input_data, bytes) else (input_data or "").encode("utf-8")
         # Capture bytes and decode with replacement to avoid decoding exceptions
         proc = subprocess.run(
             [exec_path, *(args or [])],
-            input=input_data.encode('utf-8'),
+            input=input_bytes,
             capture_output=True,
-            timeout=timeout
+            timeout=timeout,
+            cwd=cwd,
         )
         duration = time.time() - start
         try:
@@ -111,6 +127,114 @@ def run_executable(exec_path: str, input_data: str, timeout: int = 5, args: List
             "oom_killed": True,
             "time": timeout,
         }
+
+
+def decode_test_files(files: Dict[str, Any] | None) -> Dict[str, bytes]:
+    """Decode an optional mapping of relative paths to UTF-8 or base64 content."""
+    if files is None:
+        return {}
+    if not isinstance(files, dict):
+        raise ValueError("Test files must be an object mapping paths to content")
+    if len(files) > MAX_TEST_FILE_COUNT:
+        raise ValueError(f"A test case may define at most {MAX_TEST_FILE_COUNT} files")
+
+    decoded: Dict[str, bytes] = {}
+    total_size = 0
+    for raw_path, value in files.items():
+        path = str(raw_path).replace("\\", "/")
+        parts = path.split("/")
+        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in parts) or "\x00" in path:
+            raise ValueError(f"Invalid test file path: {raw_path}")
+        if isinstance(value, str):
+            content = value.encode("utf-8")
+        elif isinstance(value, dict):
+            data = value.get("data", "")
+            encoding = value.get("encoding", "utf-8")
+            if not isinstance(data, str):
+                raise ValueError(f"Invalid content for test file: {raw_path}")
+            if encoding == "utf-8":
+                content = data.encode("utf-8")
+            elif encoding == "base64":
+                try:
+                    content = base64.b64decode(data, validate=True)
+                except Exception as exc:
+                    raise ValueError(f"Invalid base64 for test file: {raw_path}") from exc
+            else:
+                raise ValueError(f"Unsupported encoding for test file: {encoding}")
+        else:
+            raise ValueError(f"Invalid content for test file: {raw_path}")
+
+        if len(content) > MAX_TEST_FILE_BYTES:
+            raise ValueError(f"Test file too large: {raw_path}")
+        total_size += len(content)
+        if total_size > MAX_TEST_FILES_TOTAL_BYTES:
+            raise ValueError("Test files exceed the total size limit")
+        decoded[path] = content
+    return decoded
+
+
+def stage_test_files(files: Dict[str, bytes], cwd: str) -> None:
+    """Write decoded fixtures below a fresh test working directory."""
+    root = os.path.realpath(cwd)
+    for relative_path, content in files.items():
+        parts = relative_path.split("/")
+        target = os.path.realpath(os.path.join(root, *parts))
+        if not target.startswith(root + os.sep):
+            raise ValueError(f"Test file path escapes working directory: {relative_path}")
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "wb") as output_file:
+            output_file.write(content)
+
+
+def collect_and_compare_files(
+    test: Dict[str, Any], cwd: str, remaining_capture_bytes: int = MAX_CAPTURED_RUN_BYTES
+) -> Tuple[Dict[str, bytes], List[str]]:
+    expected_files = decode_test_files(test.get("expected_files"))
+    output_paths = test.get("output_files")
+    if output_paths is None:
+        output_paths = list(expected_files)
+    if not isinstance(output_paths, list):
+        raise ValueError("output_files must be a list of relative paths")
+
+    requested_paths = list(dict.fromkeys([*expected_files, *[str(path) for path in output_paths]]))
+    if len(requested_paths) > MAX_TEST_FILE_COUNT:
+        raise ValueError(f"A test case may collect at most {MAX_TEST_FILE_COUNT} output files")
+    decode_test_files({path: "" for path in requested_paths})
+    root = os.path.realpath(cwd)
+    captured: Dict[str, bytes] = {}
+    mismatches: List[str] = []
+
+    for relative_path in requested_paths:
+        target = os.path.join(root, *relative_path.split("/"))
+        resolved = os.path.realpath(target)
+        if not resolved.startswith(root + os.sep) or os.path.islink(target) or not os.path.isfile(target):
+            if relative_path in expected_files:
+                mismatches.append(f"Expected output file missing: {relative_path}")
+            continue
+
+        size = os.path.getsize(target)
+        capture_limit = min(MAX_CAPTURED_FILE_BYTES, max(0, remaining_capture_bytes - sum(map(len, captured.values()))))
+        if size > capture_limit:
+            mismatches.append(f"Output file exceeds capture limit: {relative_path}")
+            continue
+        with open(target, "rb") as output_file:
+            actual = output_file.read(capture_limit + 1)
+        if len(actual) > capture_limit:
+            mismatches.append(f"Output file exceeds capture limit: {relative_path}")
+            continue
+        captured[relative_path] = actual
+        expected = expected_files.get(relative_path)
+        if expected is not None and actual != expected:
+            mismatches.append(f"Output file differs: {relative_path}")
+
+    return captured, mismatches
+
+
+def encode_captured_files(files: Dict[str, bytes]) -> List[Dict[str, str]]:
+    return [
+        {"path": path, "encoding": "base64", "data": base64.b64encode(content).decode("ascii")}
+        for path, content in files.items()
+    ]
 
 
 MAX_CAPTURED_OUTPUT_CHARS = 64 * 1024
@@ -253,19 +377,31 @@ def run_and_evaluate_all_tests(
         # === Ejecución y evaluación ===
         results = []
         outputs = []
+        captured_total = 0
         all_passed = True
         has_tle = False
         has_rte = False
         has_oom = False
-        
-        for test in tests_obj.get("tests", []):
+
+        for test_index, test in enumerate(tests_obj.get("tests", [])):
             test_id = test.get("id") or test.get("name") or "unnamed"
             input_data = test.get("input", "")
             args = resolve_args(tests_obj, test)
+            case_dir = os.path.join(workdir, f"case_{test_index}")
+            os.makedirs(case_dir, exist_ok=True)
+            case_executable = os.path.join(case_dir, "submission")
+            shutil.copy2(exe_path, case_executable)
+            stage_test_files(decode_test_files(test.get("input_files")), case_dir)
 
             # Ejecutar
-            run_result = run_executable(exe_path, input_data, timeout=timeout, args=args)
-            outputs.append(build_output_entry(test_id, run_result))
+            run_result = run_executable(case_executable, input_data, timeout=timeout, args=args, cwd=case_dir)
+            captured_files, file_errors = collect_and_compare_files(
+                test, case_dir, MAX_CAPTURED_RUN_BYTES - captured_total
+            )
+            captured_total += sum(map(len, captured_files.values()))
+            output_entry = build_output_entry(test_id, run_result)
+            output_entry["files"] = encode_captured_files(captured_files)
+            outputs.append(output_entry)
             
             # Detectar OOM
             if run_result.get("oom_killed"):
@@ -302,6 +438,11 @@ def run_and_evaluate_all_tests(
             
             # Evaluar output
             eval_result = evaluate_test(run_result.get("stdout", ""), test)
+            if file_errors:
+                eval_result["passed"] = False
+                eval_result["verdict_detail"] = "; ".join(
+                    filter(None, [eval_result.get("verdict_detail"), *file_errors])
+                )
             if not eval_result.get("passed"):
                 all_passed = False
             

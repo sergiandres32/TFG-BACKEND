@@ -28,6 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from src import judge_v2
+from src.static_analysis import analyze_sources
 from src.api.models import Base, Job, Run, UserExerciseCompletion, RunVerdict, JobStatus
 from src.api.database import SessionLocal
 import hashlib
@@ -47,6 +48,7 @@ def _build_tests_obj(db_session: sessionmaker, exercise_id: int) -> dict:
         exercise = session.query(Exercise).filter(Exercise.id == exercise_id).first()
         return {
             "exercise_args": list((exercise.execution_args if exercise else None) or []),
+            "static_rules": exercise.static_rules if exercise else None,
             "tests": [
                 {
                     "id": tc.name,
@@ -55,6 +57,9 @@ def _build_tests_obj(db_session: sessionmaker, exercise_id: int) -> dict:
                     "expected": tc.content.get("expected", ""),
                     "ignore_whitespace": tc.content.get("ignore_whitespace", False),
                     "args": tc.content.get("args", []),
+                    "input_files": tc.content.get("input_files", {}),
+                    "expected_files": tc.content.get("expected_files", {}),
+                    "output_files": tc.content.get("output_files"),
                 }
                 for tc in test_cases
             ]
@@ -145,7 +150,12 @@ def _resolve_build_executable(project_dir: str) -> str:
     raise ValueError("Multiple executables found. Please generate a single binary (recommended: submission)")
 
 
-def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout: int = 5) -> dict:
+def _evaluate_prebuilt_executable(
+    executable_path: str,
+    tests_obj: dict,
+    timeout: int = 5,
+    project_dir: str | None = None,
+) -> dict:
     start_time = time.time()
 
     results = []
@@ -154,49 +164,74 @@ def _evaluate_prebuilt_executable(executable_path: str, tests_obj: dict, timeout
     has_tle = False
     has_rte = False
     has_oom = False
+    captured_total = 0
 
-    for test in tests_obj.get("tests", []):
-        test_id = test.get("id") or test.get("name") or "unnamed"
-        input_data = test.get("input", "")
-        args = judge_v2.resolve_args(tests_obj, test)
+    with tempfile.TemporaryDirectory(prefix="judge_cases_") as cases_dir:
+        for test_index, test in enumerate(tests_obj.get("tests", [])):
+            test_id = test.get("id") or test.get("name") or "unnamed"
+            input_data = test.get("input", "")
+            args = judge_v2.resolve_args(tests_obj, test)
+            case_dir = os.path.join(cases_dir, f"case_{test_index}")
+            if project_dir:
+                shutil.copytree(project_dir, case_dir)
+                relative_executable = os.path.relpath(executable_path, project_dir)
+                case_executable = os.path.join(case_dir, relative_executable)
+            else:
+                os.makedirs(case_dir)
+                case_executable = os.path.join(case_dir, os.path.basename(executable_path))
+                shutil.copy2(executable_path, case_executable)
 
-        run_result = judge_v2.run_executable(executable_path, input_data, timeout=timeout, args=args)
-        outputs.append(judge_v2.build_output_entry(test_id, run_result))
+            judge_v2.stage_test_files(judge_v2.decode_test_files(test.get("input_files")), case_dir)
+            run_result = judge_v2.run_executable(
+                case_executable, input_data, timeout=timeout, args=args, cwd=case_dir
+            )
+            captured_files, file_errors = judge_v2.collect_and_compare_files(
+                test, case_dir, judge_v2.MAX_CAPTURED_RUN_BYTES - captured_total
+            )
+            captured_total += sum(map(len, captured_files.values()))
+            output_entry = judge_v2.build_output_entry(test_id, run_result)
+            output_entry["files"] = judge_v2.encode_captured_files(captured_files)
+            outputs.append(output_entry)
 
-        if run_result.get("oom_killed"):
-            has_oom = True
-            all_passed = False
-            results.append({"test_id": test_id, "passed": False, "details": "Out of Memory"})
-            continue
+            if run_result.get("oom_killed"):
+                has_oom = True
+                all_passed = False
+                results.append({"test_id": test_id, "passed": False, "details": "Out of Memory"})
+                continue
 
-        if run_result.get("timed_out"):
-            has_tle = True
-            all_passed = False
-            results.append({"test_id": test_id, "passed": False, "details": "Time Limit Exceeded"})
-            continue
+            if run_result.get("timed_out"):
+                has_tle = True
+                all_passed = False
+                results.append({"test_id": test_id, "passed": False, "details": "Time Limit Exceeded"})
+                continue
 
-        if run_result.get("exit_code") != 0:
-            has_rte = True
-            all_passed = False
+            if run_result.get("exit_code") != 0:
+                has_rte = True
+                all_passed = False
+                results.append(
+                    {
+                        "test_id": test_id,
+                        "passed": False,
+                        "details": f"Runtime Error (exit code {run_result.get('exit_code')})",
+                    }
+                )
+                continue
+
+            eval_result = judge_v2.evaluate_test(run_result.get("stdout", ""), test)
+            if file_errors:
+                eval_result["passed"] = False
+                eval_result["verdict_detail"] = "; ".join(
+                    filter(None, [eval_result.get("verdict_detail"), *file_errors])
+                )
+            if not eval_result.get("passed"):
+                all_passed = False
             results.append(
                 {
                     "test_id": test_id,
-                    "passed": False,
-                    "details": f"Runtime Error (exit code {run_result.get('exit_code')})",
+                    "passed": bool(eval_result.get("passed")),
+                    "details": eval_result.get("verdict_detail"),
                 }
             )
-            continue
-
-        eval_result = judge_v2.evaluate_test(run_result.get("stdout", ""), test)
-        if not eval_result.get("passed"):
-            all_passed = False
-        results.append(
-            {
-                "test_id": test_id,
-                "passed": bool(eval_result.get("passed")),
-                "details": eval_result.get("verdict_detail"),
-            }
-        )
 
     if all_passed and results:
         verdict = "AC"
@@ -241,13 +276,24 @@ def evaluate_job_submission(job_id: int, user_id: int, exercise_id: int, code: s
         payload = _parse_submission_payload(code)
 
         if payload.get("format") == "plain_c":
-            return judge_v2.run_and_evaluate_all_tests(payload.get("code_text") or "", tests_obj, timeout=timeout)
+            source = payload.get("code_text") or ""
+            result = judge_v2.run_and_evaluate_all_tests(source, tests_obj, timeout=timeout)
+            result["analysis_report"] = analyze_sources({"submission.c": source}, tests_obj.get("static_rules"))
+            return result
 
         if payload.get("format") == "zip_makefile":
             with tempfile.TemporaryDirectory(prefix="judge_project_") as tmp_dir:
                 project_dir = os.path.join(tmp_dir, "project")
                 os.makedirs(project_dir, exist_ok=True)
                 _safe_extract_zip(payload.get("zip_bytes") or b"", project_dir)
+                source_files = {}
+                for root, _, filenames in os.walk(project_dir):
+                    for filename in filenames:
+                        if filename.lower().endswith(".c"):
+                            path = os.path.join(root, filename)
+                            relative_path = os.path.relpath(path, project_dir).replace(os.sep, "/")
+                            with open(path, "r", encoding="utf-8", errors="replace") as source_file:
+                                source_files[relative_path] = source_file.read()
 
                 makefile_upper = os.path.join(project_dir, "Makefile")
                 makefile_lower = os.path.join(project_dir, "makefile")
@@ -276,7 +322,11 @@ def evaluate_job_submission(job_id: int, user_id: int, exercise_id: int, code: s
                     }
 
                 executable = _resolve_build_executable(project_dir)
-                return _evaluate_prebuilt_executable(executable, tests_obj, timeout=timeout)
+                result = _evaluate_prebuilt_executable(
+                    executable, tests_obj, timeout=timeout, project_dir=project_dir
+                )
+                result["analysis_report"] = analyze_sources(source_files, tests_obj.get("static_rules"))
+                return result
 
         return {"error": "Unsupported submission format", "verdict": "CE"}
 
@@ -341,6 +391,7 @@ def process_job(job: Job, db_session_factory):
                 "compile_error": judge_result.get("compile_error"),
             },
             outputs=judge_result.get("outputs"),
+            analysis_report=judge_result.get("analysis_report"),
             code_preview=code_preview,
             code_sha256=code_hash,
             duration_ms=judge_result.get("duration_ms")

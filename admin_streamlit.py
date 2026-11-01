@@ -973,6 +973,69 @@ def render_dashboard():
                 if deleted_count > 0:
                     queue_flash(f"S'han eliminat {deleted_count} exercici(s).", target="exercises_editor")
                     st.rerun()
+
+        if exercises:
+            with st.expander("Editar regles d'anàlisi estàtica"):
+                static_rule_exercise_options = {
+                    f"{exercise.get('title') or 'Exercici'} (id={exercise.get('id')})": int(exercise["id"])
+                    for exercise in exercises
+                    if exercise.get("id") is not None
+                }
+                selected_static_rule_label = st.selectbox(
+                    "Exercici",
+                    options=list(static_rule_exercise_options),
+                    key="static_rules_exercise_selector",
+                )
+                selected_static_rule_id = static_rule_exercise_options[selected_static_rule_label]
+                rules_status, rules_result = api_get(
+                    base_url,
+                    f"/teacher/exercises/{selected_static_rule_id}/static-rules",
+                    token,
+                )
+                if rules_status == 200 and isinstance(rules_result, dict):
+                    current_rules = rules_result.get("static_rules")
+                    editor_key = f"static_rules_editor_{selected_static_rule_id}"
+                    default_rules_json = json.dumps(current_rules, ensure_ascii=False, indent=2) if current_rules else ""
+                    with st.form(f"static_rules_form_{selected_static_rule_id}"):
+                        static_rules_json = st.text_area(
+                            "Regles JSON",
+                            value=default_rules_json,
+                            height=180,
+                            key=editor_key,
+                            help="Admet required_calls, forbidden_calls, forbidden_headers, min_counts, max_counts i required_pairs. JSON buit = eliminar regles.",
+                        )
+                        save_rules = st.form_submit_button("Guardar regles")
+
+                    st.caption("Informe orientatiu per al professor; aquestes regles no afecten el veredicte AC/WA.")
+                    if save_rules:
+                        if static_rules_json.strip():
+                            try:
+                                parsed_rules = json.loads(static_rules_json)
+                                if not isinstance(parsed_rules, dict):
+                                    raise ValueError("Les regles han de ser un objecte JSON.")
+                            except (json.JSONDecodeError, ValueError) as exc:
+                                st.error(f"JSON de regles invàlid: {exc}")
+                                st.stop()
+                        else:
+                            parsed_rules = None
+
+                        save_status, save_result = api_put_json(
+                            base_url,
+                            f"/teacher/exercises/{selected_static_rule_id}/static-rules",
+                            {"static_rules": parsed_rules},
+                            token,
+                        )
+                        if save_status == 200:
+                            st.session_state[editor_key] = (
+                                json.dumps(parsed_rules, ensure_ascii=False, indent=2) if parsed_rules else ""
+                            )
+                            queue_flash("Regles d'anàlisi estàtica actualitzades.", target="exercises_editor")
+                            st.rerun()
+                        else:
+                            st.error(save_result.get("detail", "No s'han pogut desar les regles."))
+                else:
+                    detail = rules_result.get("detail", "No s'han pogut carregar les regles.") if isinstance(rules_result, dict) else "No s'han pogut carregar les regles."
+                    st.error(detail)
     elif show_exercises:
         st.info("Encara no hi ha exercicis creats.")
 
@@ -1020,6 +1083,11 @@ def render_dashboard():
                 "Arguments d'execució (opcional)",
                 help="Separats per espais. Si s'omplen, s'envien SEMPRE al binari de l'alumne (abans dels arguments propis de cada joc de prova). Buit = execució normal.",
             )
+            exercise_static_rules_text = st.text_area(
+                "Regles d'anàlisi estàtica orientativa (JSON, opcional)",
+                height=120,
+                help="Només genera un informe per al professor; mai afecta AC/WA. Exemple: {\"static_rules\":{\"required_calls\":[\"fork\",\"wait\"],\"forbidden_calls\":[\"system\"]}}",
+            )
             create_exercise = st.form_submit_button("Crear exercici")
 
         if create_exercise:
@@ -1035,6 +1103,14 @@ def render_dashboard():
                 }
                 if exercise_exec_args.strip():
                     payload["execution_args"] = exercise_exec_args.split()
+                if exercise_static_rules_text.strip():
+                    try:
+                        payload["static_rules"] = json.loads(exercise_static_rules_text)
+                        if not isinstance(payload["static_rules"], dict):
+                            raise ValueError("static_rules ha de ser un objecte JSON")
+                    except (json.JSONDecodeError, ValueError) as exc:
+                        st.error(f"Regles d'anàlisi estàtica invàlides: {exc}")
+                        st.stop()
                 selected_topic_id = topic_options[selected_topic_label]
                 if selected_topic_id is not None:
                     payload["topic_id"] = selected_topic_id
@@ -1052,7 +1128,7 @@ def render_dashboard():
             st.rerun()
 
         with st.form("import_exercises_json_form"):
-            st.caption("Accepta objecte o llista amb claus: title, description, level (beginner|mid|expert o bàsic/basic|intermedi|difícil/dificil), expected_submission_type (opcional: c_file|zip_makefile), is_required (opcional), execution_args (opcional, llista d'arguments), i topic_id o topic_name (almenys un dels dos).")
+            st.caption("Accepta objecte o llista amb claus: title, description, level, expected_submission_type, is_required, execution_args, static_rules (opcional, JSON informatiu) i topic_id o topic_name.")
             exercises_json_input = st.text_area(
                 "JSON d'exercicis",
                 height=220,
@@ -1124,6 +1200,12 @@ def render_dashboard():
 
                     if item.get("execution_args"):
                         payload["execution_args"] = [str(a) for a in item["execution_args"]]
+                    if item.get("static_rules") is not None:
+                        if not isinstance(item["static_rules"], dict):
+                            failed_count += 1
+                            st.error(f"Exercici #{idx}: 'static_rules' ha de ser un objecte.")
+                            continue
+                        payload["static_rules"] = item["static_rules"]
 
                     if topic_id_value is not None:
                         try:
@@ -1226,7 +1308,24 @@ def render_dashboard():
                 )
                 test_input = st.text_area("Input", height=100)
                 test_expected = st.text_area("Output esperat", height=100)
+                test_input_files = st.file_uploader(
+                    "Fitxers d'entrada del professor (opcional)",
+                    accept_multiple_files=True,
+                    key="testcase_input_files",
+                    help="Es copien al directori temporal del test i poden ser text o binaris.",
+                )
+                test_expected_files = st.file_uploader(
+                    "Fitxers de sortida esperats (opcional)",
+                    accept_multiple_files=True,
+                    key="testcase_expected_files",
+                    help="Es comparen byte a byte i també es poden descarregar del resultat de l'alumne.",
+                )
+                test_output_paths = st.text_input(
+                    "Altres fitxers generats a recollir (opcional)",
+                    help="Rutes relatives separades per comes. Els fitxers es descarreguen però no es comparen.",
+                )
                 test_ignore_ws = st.checkbox("Ignorar espais en blanc", value=False)
+                test_hidden = st.checkbox("Joc de prova ocult per a l'alumnat", value=False)
                 create_test_case = st.form_submit_button("Afegir joc de prova")
 
             if create_test_case:
@@ -1242,7 +1341,26 @@ def render_dashboard():
                             "mode": test_mode,
                             "ignore_whitespace": test_ignore_ws,
                             "args": test_args.split(),
+                            "input_files": {
+                                uploaded.name: {
+                                    "encoding": "base64",
+                                    "data": base64.b64encode(uploaded.getvalue()).decode("ascii"),
+                                }
+                                for uploaded in test_input_files
+                            },
+                            "expected_files": {
+                                uploaded.name: {
+                                    "encoding": "base64",
+                                    "data": base64.b64encode(uploaded.getvalue()).decode("ascii"),
+                                }
+                                for uploaded in test_expected_files
+                            },
+                            "output_files": list(dict.fromkeys(
+                                [uploaded.name for uploaded in test_expected_files]
+                                + [path.strip() for path in test_output_paths.split(",") if path.strip()]
+                            )),
                         },
+                        "hidden": test_hidden,
                     }
                     tc_status, tc_result = api_post_json(base_url, "/test_cases", tc_payload, token)
                     if tc_status == 200:
@@ -1257,7 +1375,7 @@ def render_dashboard():
                 st.rerun()
 
             with st.form("import_testcases_json_form"):
-                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden (opcional), content{input, expected, mode(exact|lines|unordered_lines|unordered_tokens|regex), ignore_whitespace, args(opcional, llista d'arguments argv)}.")
+                st.caption("Accepta objecte o llista amb claus: exercise_id (opcional), name, hidden, content{input, expected, mode, ignore_whitespace, args, input_files i expected_files (mapes de ruta a text o {encoding: base64, data: ...}), output_files}.")
                 testcases_json_input = st.text_area(
                     "JSON de jocs de prova",
                     height=220,
@@ -1298,6 +1416,7 @@ def render_dashboard():
                             "exercise_id": exercise_id_value,
                             "name": name,
                             "content": {
+                                **content,
                                 "input": str(content.get("input") or ""),
                                 "expected": str(content.get("expected") or ""),
                                 "mode": str(content.get("mode") or "exact"),
@@ -1615,6 +1734,33 @@ def render_dashboard():
                 else:
                     st.caption("Aquesta entrega no té output desat (anterior a aquesta funcionalitat o encara en cua).")
 
+                files_status, files_bytes, files_headers, _ = api_get_bytes(
+                    base_url,
+                    f"/teacher/submissions/{selected_download_job_id}/output-files",
+                    token,
+                )
+                if files_status == 200 and files_bytes is not None:
+                    files_disposition = files_headers.get("Content-Disposition") or files_headers.get("content-disposition") or ""
+                    st.download_button(
+                        "Descarregar fitxers generats",
+                        data=files_bytes,
+                        file_name=_filename_from_content_disposition(
+                            files_disposition,
+                            fallback=f"output_files_job_{selected_download_job_id}.zip",
+                        ),
+                        mime="application/zip",
+                        key=f"teacher_output_files_download_button_{selected_download_job_id}",
+                    )
+
+                analysis_status, analysis_report = api_get(
+                    base_url,
+                    f"/teacher/submissions/{selected_download_job_id}/analysis",
+                    token,
+                )
+                if analysis_status == 200 and isinstance(analysis_report, dict):
+                    with st.expander("Informe d'anàlisi estàtica orientativa"):
+                        st.json(analysis_report)
+
             ac_submissions = [
                 item
                 for item in teacher_submissions
@@ -1832,6 +1978,12 @@ def render_dashboard():
                                 "expected_submission_type": exercise_item.get("expected_submission_type", "c_file"),
                                 "is_required": bool(exercise_item.get("is_required", False)),
                             }
+                            if exercise_item.get("static_rules") is not None:
+                                if not isinstance(exercise_item["static_rules"], dict):
+                                    failed_count += 1
+                                    st.error(f"Tema #{topic_idx} / exercici #{ex_idx}: 'static_rules' ha de ser un objecte.")
+                                    continue
+                                exercise_create_payload["static_rules"] = exercise_item["static_rules"]
                             if exercise_item.get("execution_args"):
                                 exercise_create_payload["execution_args"] = [str(a) for a in exercise_item["execution_args"]]
                             e_status, e_result = api_post_json(base_url, "/exercises", exercise_create_payload, token)
@@ -1873,6 +2025,7 @@ def render_dashboard():
                                     "exercise_id": exercise_id_value,
                                     "name": tc_name,
                                     "content": {
+                                        **content,
                                         "input": str(content.get("input") or ""),
                                         "expected": str(content.get("expected") or ""),
                                         "mode": str(content.get("mode") or "exact"),

@@ -435,13 +435,23 @@ Content-Type: application/json
 {
   "exercise_id": 1,
   "name": "test_hidden_1",
+  "hidden": true,
   "content": {
     "input": "100 200\n",
     "expected": "300\n",
-    "mode": "exact"
+    "mode": "exact",
+    "input_files": {
+      "numbers.bin": {"encoding": "base64", "data": "AwAAAAQAAAA="}
+    },
+    "expected_files": {"sum.txt": "7\n"},
+    "output_files": ["sum.txt"]
   }
 }
 ```
+
+`input_files` i `expected_files` són mapes de ruta relativa a contingut. Un valor string es desa com UTF-8; per dades binàries s'usa `{ "encoding": "base64", "data": "..." }`. Els fixtures del professor se sobreposen als fitxers amb el mateix nom que vinguin al ZIP. `expected_files` es compara byte a byte; `output_files` recull fitxers addicionals sense comparar-los. Cada test s'executa en una còpia aïllada del projecte.
+
+Límites: fins a 20 fitxers per cas, 5 MB per fitxer i 20 MB per conjunt; els fitxers generats es limiten a 512 KB cadascun i 4 MB en total per entrega. Les rutes absolutes i les que contenen `..` es rebutgen.
 
 **Response (200):**
 ```json
@@ -479,6 +489,7 @@ Reglas para `.zip`:
 
 Parametros de ejecucion y modos de comparacion:
 - `POST/PUT /exercises` aceptan `execution_args` (lista de strings, opcional). Si se informa, se pasan siempre al binario antes de `content.args` del test case; si se omite, ejecucion como siempre.
+- `POST/PUT /exercises` aceptan `static_rules` (JSON opcional). Define `required_calls`, `forbidden_calls`, `forbidden_headers`, `min_counts`, `max_counts` y `required_pairs`. El informe es orientativo, no cambia AC/WA y solo lo puede consultar el profesor.
 - `content.mode` de un test case admite `exact`, `lines`, `regex`, `unordered_lines` (ignora orden de lineas) y `unordered_tokens` (ignora orden de palabras). Ambos `unordered_*` respetan duplicados.
 
 **Response (200):**
@@ -624,6 +635,22 @@ El nombre de descarga se genera automaticamente con ejercicio + alumno + job id.
 ### 8.d GET `/teacher/submissions/{job_id}/output` - Descargar output de la entrega (solo profesor)
 
 Devuelve un `.txt` con stdout, stderr y exit code de cada test case de la entrega (truncado a 64 KB por test). `404` si la entrega es anterior a esta funcionalidad o aun no se ha evaluado. El output nunca se expone al alumno (no va en `details`).
+
+### 8.e GET `/teacher/submissions/{job_id}/output-files` - Descargar ficheros generados (solo profesor)
+
+Devuelve un ZIP con los ficheros declarados en `content.output_files` o `content.expected_files`, agrupados por test. Solo puede descargarlo un profesor de la asignatura; devuelve `404` si no hay artefactos configurados.
+
+### 8.f GET `/teacher/submissions/{job_id}/analysis` - Consultar informe estático (solo profesor)
+
+Devuelve `Run.analysis_report` si el ejercicio tiene reglas configuradas. El análisis `jutge-static-rules-v1` es heurístico, basado en patrones, no usa AST y no afecta al veredicto; devuelve `404` si no hay informe.
+
+### 8.g GET `/teacher/exercises/{exercise_id}/static-rules` - Consultar reglas estáticas (solo profesor)
+
+Devuelve la configuración `static_rules` del ejercicio o `null` si no hay reglas. Requiere ser profesor de la asignatura del ejercicio.
+
+### 8.h PUT `/teacher/exercises/{exercise_id}/static-rules` - Actualizar o borrar reglas (solo profesor)
+
+Request: `{"static_rules": {"static_rules": {"required_calls": ["fork", "wait"]}}}`. Para borrarlas: `{"static_rules": null}`. La API valida las claves y tipos de regla admitidos y limita el acceso a profesores de la asignatura.
 
 ---
 

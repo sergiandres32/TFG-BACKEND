@@ -563,6 +563,7 @@ def create_exercise(db: Session, ex: schemas.ExerciseCreate, creator_id: int = N
         expected_submission_type=ex.expected_submission_type,
         is_required=ex.is_required,
         execution_args=ex.execution_args or None,
+        static_rules=ex.static_rules or None,
         created_by=creator_id,
     )
     db.add(db_ex)
@@ -583,6 +584,8 @@ def update_exercise(db: Session, exercise_id: int, ex_data: schemas.ExerciseUpda
     exercise.expected_submission_type = ex_data.expected_submission_type
     exercise.is_required = ex_data.is_required
     exercise.execution_args = ex_data.execution_args or None
+    if "static_rules" in ex_data.model_fields_set:
+        exercise.static_rules = ex_data.static_rules or None
     db.commit()
     db.refresh(exercise)
     return exercise
@@ -721,7 +724,12 @@ def get_public_test_cases_for_exercise(db: Session, exercise_id: int):
 
 
 def create_test_case(db: Session, tc: schemas.TestCaseCreate):
-    db_tc = models.TestCase(exercise_id=tc.exercise_id, name=tc.name, content=tc.content)
+    db_tc = models.TestCase(
+        exercise_id=tc.exercise_id,
+        name=tc.name,
+        content=tc.content,
+        hidden=tc.hidden,
+    )
     db.add(db_tc)
     db.commit()
     db.refresh(db_tc)
@@ -1100,6 +1108,7 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
     exercise = get_exercise_by_id(db, exercise_id)
     tests_obj = {
         "exercise_args": list((exercise.execution_args if exercise else None) or []),
+        "static_rules": exercise.static_rules if exercise else None,
         "tests": [
             {
                 "id": tc.name,
@@ -1107,7 +1116,10 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
                 "input": tc.content.get("input", ""),
                 "expected": tc.content.get("expected", ""),
                 "ignore_whitespace": tc.content.get("ignore_whitespace", False),
-                "args": tc.content.get("args", [])
+                "args": tc.content.get("args", []),
+                "input_files": tc.content.get("input_files", {}),
+                "expected_files": tc.content.get("expected_files", {}),
+                "output_files": tc.content.get("output_files"),
             }
             for tc in test_cases
         ],
@@ -1115,6 +1127,9 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
     
     # Evaluar
     judge_result = judge_v2.run_and_evaluate_all_tests(code, tests_obj, timeout=timeout)
+    if exercise and exercise.static_rules:
+        from src.static_analysis import analyze_sources
+        judge_result["analysis_report"] = analyze_sources({"submission.c": code or ""}, exercise.static_rules)
     
     # Mapear verdict string a enum
     verdict_str = judge_result.get("verdict", "WA")
@@ -1139,6 +1154,7 @@ def evaluate_submission_with_judge(db: Session, user_id: int, exercise_id: int, 
             "results": judge_result.get("results"),
             "compile_error": judge_result.get("compile_error"),
         },
+        analysis_report=judge_result.get("analysis_report"),
         code_preview=code_preview,
         code_sha256=code_hash,
         duration_ms=judge_result.get("duration_ms")

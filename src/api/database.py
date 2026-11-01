@@ -292,6 +292,20 @@ def ensure_phase7_run_outputs_schema(engine):
             conn.execute(text("ALTER TABLE runs ADD COLUMN outputs JSON"))
 
 
+def ensure_phase8_static_analysis_schema(engine):
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    if not {"exercises", "runs"}.issubset(table_names):
+        return
+    exercise_columns = {col["name"] for col in inspector.get_columns("exercises")}
+    run_columns = {col["name"] for col in inspector.get_columns("runs")}
+    with engine.begin() as conn:
+        if "static_rules" not in exercise_columns:
+            conn.execute(text("ALTER TABLE exercises ADD COLUMN static_rules JSON"))
+        if "analysis_report" not in run_columns:
+            conn.execute(text("ALTER TABLE runs ADD COLUMN analysis_report JSON"))
+
+
 def get_db():
     db = SessionLocal()
     try:

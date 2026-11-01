@@ -2,16 +2,18 @@ from fastapi import FastAPI, Depends, HTTPException, Body, File, UploadFile, For
 from fastapi.responses import RedirectResponse, Response
 from sqlalchemy.orm import Session
 from . import models, schemas, crud
-from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema, ensure_phase6_exercise_execution_args_schema, ensure_phase7_run_outputs_schema
+from .database import engine, Base, get_db, ensure_phase1_schema, ensure_phase2_multi_subject_schema, ensure_phase3_lti_schema, ensure_phase4_topic_secret_schema, ensure_phase5_exercise_submission_type_schema, ensure_phase6_exercise_execution_args_schema, ensure_phase7_run_outputs_schema, ensure_phase8_static_analysis_schema
 from .security import create_access_token, get_current_user, require_teacher, require_student
 import base64
 import hashlib
 import hmac
+import io
 import json
 import os
 import re
 import time
 import urllib.parse
+import zipfile
 
 Base.metadata.create_all(bind=engine)
 ensure_phase1_schema(engine)
@@ -21,6 +23,7 @@ ensure_phase4_topic_secret_schema(engine)
 ensure_phase5_exercise_submission_type_schema(engine)
 ensure_phase6_exercise_execution_args_schema(engine)
 ensure_phase7_run_outputs_schema(engine)
+ensure_phase8_static_analysis_schema(engine)
 
 app = FastAPI(
     title="Jutge Mini API",
@@ -786,6 +789,12 @@ def login_disabled():
 def create_exercise(ex: schemas.ExerciseCreate, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
     if ex.topic_id is None:
         raise HTTPException(status_code=400, detail="topic_id is required")
+    if ex.static_rules is not None:
+        from src.static_analysis import validate_rules
+        try:
+            validate_rules(ex.static_rules)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     topic = crud.get_topic_by_id(db, ex.topic_id)
     if not topic:
@@ -794,6 +803,58 @@ def create_exercise(ex: schemas.ExerciseCreate, current: models.User = Depends(r
         raise HTTPException(status_code=403, detail="Not a teacher in this subject")
     e = crud.create_exercise(db, ex, creator_id=current.id)
     return {"id": e.id, "title": e.title}
+
+
+@app.get(
+    "/teacher/exercises/{exercise_id}/static-rules",
+    summary="Consultar reglas estáticas de un ejercicio (solo profesor)",
+)
+def get_teacher_exercise_static_rules(
+    exercise_id: int,
+    current: models.User = Depends(require_teacher),
+    db: Session = Depends(get_db),
+):
+    exercise = crud.get_exercise_by_id(db, exercise_id)
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise topic not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+    return {"exercise_id": exercise.id, "static_rules": exercise.static_rules}
+
+
+@app.put(
+    "/teacher/exercises/{exercise_id}/static-rules",
+    summary="Actualizar o borrar reglas estáticas de un ejercicio (solo profesor)",
+)
+def update_teacher_exercise_static_rules(
+    exercise_id: int,
+    payload: schemas.TeacherStaticRulesUpdate,
+    current: models.User = Depends(require_teacher),
+    db: Session = Depends(get_db),
+):
+    exercise = crud.get_exercise_by_id(db, exercise_id)
+    if not exercise:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    subject_id = crud.get_exercise_subject_id(db, exercise_id)
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise topic not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    if payload.static_rules is not None:
+        from src.static_analysis import validate_rules
+        try:
+            validate_rules(payload.static_rules)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    exercise.static_rules = payload.static_rules
+    db.commit()
+    db.refresh(exercise)
+    return {"exercise_id": exercise.id, "static_rules": exercise.static_rules}
 
 
 @app.get(
@@ -919,6 +980,13 @@ def update_exercise(exercise_id: int, ex: schemas.ExerciseUpdate, current: model
         raise HTTPException(status_code=404, detail="Exercise topic not found")
     if not crud.is_user_teacher_in_subject(db, current.id, current_subject_id):
         raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    if "static_rules" in ex.model_fields_set and ex.static_rules is not None:
+        from src.static_analysis import validate_rules
+        try:
+            validate_rules(ex.static_rules)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     if ex.topic_id is not None:
         topic = crud.get_topic_by_id(db, ex.topic_id)
@@ -1153,6 +1221,22 @@ def create_test_case(tc: schemas.TestCaseCreate, current: models.User = Depends(
         raise HTTPException(status_code=404, detail="Exercise not found")
     if not crud.is_user_teacher_in_subject(db, current.id, exercise_subject_id):
         raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    from src import judge_v2
+    try:
+        judge_v2.decode_test_files(tc.content.get("input_files"))
+        expected_files = judge_v2.decode_test_files(tc.content.get("expected_files"))
+        output_files = tc.content.get("output_files")
+        if output_files is not None:
+            if not isinstance(output_files, list):
+                raise ValueError("output_files must be a list of relative paths")
+            if len(output_files) > judge_v2.MAX_TEST_FILE_COUNT:
+                raise ValueError(f"A test case may collect at most {judge_v2.MAX_TEST_FILE_COUNT} output files")
+            judge_v2.decode_test_files({str(path): "" for path in output_files})
+        if len(expected_files) > judge_v2.MAX_TEST_FILE_COUNT:
+            raise ValueError(f"A test case may define at most {judge_v2.MAX_TEST_FILE_COUNT} expected output files")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
     t = crud.create_test_case(db, tc)
     return {"id": t.id, "name": t.name}
@@ -1439,6 +1523,82 @@ def download_teacher_submission_output(job_id: int, current: models.User = Depen
     filename = f"{exercise_part}__{user_part}__job{job.id}__output.txt"
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return Response(content="\n".join(sections).encode("utf-8"), media_type="text/plain; charset=utf-8", headers=headers)
+
+
+@app.get(
+    "/teacher/submissions/{job_id}/output-files",
+    summary="Descargar ficheros generados por una entrega (solo profesor)",
+)
+def download_teacher_submission_output_files(job_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    subject_id = crud.get_exercise_subject_id(db, int(job.exercise_id))
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    run = db.query(models.Run).filter(models.Run.id == job.run_id).first() if job.run_id else None
+    output_entries = (run.outputs or []) if run else []
+    artifacts = [
+        (index, item)
+        for index, entry in enumerate(output_entries, start=1)
+        for item in entry.get("files", [])
+        if item.get("path") and "data" in item
+    ]
+    if not artifacts:
+        raise HTTPException(status_code=404, detail="No output files stored for this submission")
+
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        used_names = set()
+        for test_index, item in artifacts:
+            path = str(item["path"]).replace("\\", "/")
+            if path.startswith("/") or any(part in ("", ".", "..") for part in path.split("/")):
+                continue
+            archive_name = f"test_{test_index}/{path}"
+            if archive_name in used_names:
+                continue
+            used_names.add(archive_name)
+            try:
+                payload = base64.b64decode(item["data"], validate=True)
+            except Exception:
+                continue
+            archive.writestr(archive_name, payload)
+
+    if not used_names:
+        raise HTTPException(status_code=404, detail="No valid output files stored for this submission")
+
+    user = db.query(models.User).filter(models.User.id == job.user_id).first()
+    exercise = db.query(models.Exercise).filter(models.Exercise.id == job.exercise_id).first()
+    exercise_part = _slugify_filename_fragment((exercise.title if exercise else None) or f"exercise_{job.exercise_id}")
+    user_part = _slugify_filename_fragment(((user.email or "").split("@")[0] if user else "") or (user.username if user else "user"))
+    filename = f"{exercise_part}__{user_part}__job{job.id}__output_files.zip"
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return Response(content=archive_buffer.getvalue(), media_type="application/zip", headers=headers)
+
+
+@app.get(
+    "/teacher/submissions/{job_id}/analysis",
+    summary="Consultar análisis estático orientativo (solo profesor)",
+)
+def get_teacher_submission_analysis(job_id: int, current: models.User = Depends(require_teacher), db: Session = Depends(get_db)):
+    job = db.query(models.Job).filter(models.Job.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    subject_id = crud.get_exercise_subject_id(db, int(job.exercise_id))
+    if subject_id is None:
+        raise HTTPException(status_code=404, detail="Exercise not found")
+    if not crud.is_user_teacher_in_subject(db, current.id, subject_id):
+        raise HTTPException(status_code=403, detail="Not a teacher in this subject")
+
+    run = db.query(models.Run).filter(models.Run.id == job.run_id).first() if job.run_id else None
+    if not run or not run.analysis_report:
+        raise HTTPException(status_code=404, detail="No static analysis report for this submission")
+    return run.analysis_report
 
 
 @app.get(

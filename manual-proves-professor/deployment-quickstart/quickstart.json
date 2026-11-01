@@ -1,0 +1,210 @@
+{
+  "topics": [
+    {
+      "name": "Quick start de desplegament: C bàsic",
+      "description": "Prova arguments fixos i per test, stdin i comparació exacta/per línies.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Suma arguments i stdin",
+          "description": "Executa el programa amb un argument fix d'exercici i un argument propi del test. Llegeix un enter per stdin i suma els tres valors. Solució: solutions/t0_args_stdin.c.",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "execution_args": ["5"],
+          "static_rules": {
+            "static_rules": {
+              "required_calls": ["atoi", "scanf", "printf"],
+              "forbidden_calls": ["system"]
+            }
+          },
+          "test_cases": [
+            {
+              "name": "args_mes_stdin_exact",
+              "hidden": false,
+              "content": {
+                "args": ["7"],
+                "input": "10\n",
+                "expected": "22\n",
+                "mode": "exact"
+              }
+            },
+            {
+              "name": "args_negatiu_lines",
+              "hidden": true,
+              "content": {
+                "args": ["-2"],
+                "input": "3\n",
+                "expected": "6\n",
+                "mode": "lines"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quick start de desplegament: processos",
+      "description": "Fork, wait i sortida ordenada del fill i del pare.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Fill i pare amb fork/wait",
+          "description": "Crea un fill, espera'n la finalització i escriu primer 'child' i després 'parent'. Solució: solutions/t2_processes.c.",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "static_rules": {
+            "static_rules": {
+              "required_calls": ["fork", "wait", "write"],
+              "forbidden_calls": ["system", "popen"],
+              "required_pairs": [["fork", "wait"]]
+            }
+          },
+          "test_cases": [
+            {
+              "name": "ordre_pare_fills",
+              "hidden": false,
+              "content": {
+                "input": "",
+                "expected": "child\nparent\n",
+                "mode": "lines"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quick start de desplegament: entrada i sortida",
+      "description": "Fitxers de text i binaris controlats pel professor, fitxer esperat, sortida regex i descàrrega d'artefactes.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Copiar fitxer amb read/write",
+          "description": "Rep com a arguments el nom del fitxer d'entrada i el de sortida. Copia els bytes amb open/read/write i informa quants bytes ha copiat. Solució: solutions/t3_file_copy.c.",
+          "level": "beginner",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "static_rules": {
+            "static_rules": {
+              "required_calls": ["open", "read", "write", "close", "snprintf"],
+              "forbidden_calls": ["printf", "scanf", "fopen"],
+              "min_counts": {"open": 2, "read": 1, "write": 2},
+              "required_pairs": [["open", "close"]]
+            }
+          },
+          "test_cases": [
+            {
+              "name": "fitxer_text",
+              "hidden": false,
+              "content": {
+                "args": ["message.txt", "copy.txt"],
+                "input": "",
+                "expected": "",
+                "mode": "regex",
+                "expected_pattern": "^copied [0-9]+ bytes$",
+                "input_files": {"message.txt": "Jutge file fixture\n"},
+                "expected_files": {"copy.txt": "Jutge file fixture\n"}
+              }
+            },
+            {
+              "name": "fitxer_binari",
+              "hidden": true,
+              "content": {
+                "args": ["bytes.bin", "copy.bin"],
+                "input": "",
+                "expected": "",
+                "mode": "regex",
+                "expected_pattern": "^copied [0-9]+ bytes$",
+                "input_files": {"bytes.bin": {"encoding": "base64", "data": "AAEC/wo="}},
+                "expected_files": {"copy.bin": {"encoding": "base64", "data": "AAEC/wo="}}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quick start de desplegament: pipes",
+      "description": "Entrega ZIP/Makefile, recursos inclosos al projecte i fixture docent que els sobreescriu per test. La comparació no depèn de l'ordre dels tokens.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Quatre fills escriuen per pipe",
+          "description": "Entrega un ZIP amb Makefile, main.c i count.txt. El fitxer count.txt del projecte diu 2, però el test docent el substitueix per 4 al sandbox. Cada fill escriu el seu número per la pipe. Puja solutions/t4_pipes_solution.zip.",
+          "level": "mid",
+          "expected_submission_type": "zip_makefile",
+          "is_required": false,
+          "static_rules": {
+            "static_rules": {
+              "required_calls": ["open", "read", "pipe", "fork", "write", "close", "wait", "atoi", "snprintf"],
+              "forbidden_calls": ["system", "popen"],
+              "min_counts": {"pipe": 1, "fork": 1},
+              "required_pairs": [["pipe", "close"], ["fork", "wait"]]
+            }
+          },
+          "test_cases": [
+            {
+              "name": "fixture_docent_sobreposa_zip",
+              "hidden": false,
+              "content": {
+                "input": "",
+                "expected": "1 2 3 4",
+                "mode": "unordered_tokens",
+                "input_files": {"count.txt": "4\n"}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Quick start de desplegament: signals",
+      "description": "Handlers de SIGUSR1 en fills, amb una línia independent per fill i ordre concurrent.",
+      "weight": 1.0,
+      "required_beginner": 0,
+      "required_mid": 0,
+      "required_expert": 0,
+      "exercises": [
+        {
+          "title": "Fills amb SIGUSR1",
+          "description": "Instal·la un handler de SIGUSR1, crea dos fills i fes que cada fill s'enviï el senyal amb raise(). El pare espera els dos fills. Aquest test demostra senyals generats pel programa; Jutge encara no injecta senyals externs durant l'execució. Solució: solutions/t5_signals.c.",
+          "level": "mid",
+          "expected_submission_type": "c_file",
+          "is_required": false,
+          "static_rules": {
+            "static_rules": {
+              "required_calls": ["signal", "raise", "fork", "wait", "write"],
+              "forbidden_calls": ["printf", "system", "popen"],
+              "required_pairs": [["fork", "wait"]]
+            }
+          },
+          "test_cases": [
+            {
+              "name": "senyals_en_qualsevol_ordre",
+              "hidden": false,
+              "content": {
+                "input": "",
+                "expected": "signal child 1\nsignal child 2\n",
+                "mode": "unordered_lines"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

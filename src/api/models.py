@@ -138,6 +138,7 @@ class Exercise(Base):
     )
     is_required = Column(Boolean, default=False, nullable=False)
     execution_args = Column(JSON, nullable=True)
+    static_rules = Column(JSON, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -192,6 +193,7 @@ class Run(Base):
     passed = Column(Boolean, nullable=False)
     details = Column(JSON, nullable=True)
     outputs = Column(JSON, nullable=True)
+    analysis_report = Column(JSON, nullable=True)
     duration_ms = Column(Integer, nullable=True)
     memory_kb = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
